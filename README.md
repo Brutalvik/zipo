@@ -53,8 +53,8 @@ You need the following installed globally:
 1.  **Clone the repository:**
 
     ```bash
-    git clone [YOUR-REPO-URL] car-rental-app
-    cd car-rental-app
+    git clone https://github.com/Brutalvik/zipo
+    cd zipo
     ```
 
 2.  **Install dependencies:**
