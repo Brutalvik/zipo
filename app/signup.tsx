@@ -1,4 +1,5 @@
-import React, { useState, useRef } from "react";
+// app/signup.tsx
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -12,21 +13,12 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
+
 import Button from "@/app/components/Button/Button";
 
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as Yup from "yup";
-
-// --------- Validation schema ----------
-const SignupSchema = Yup.object({
-  fullName: Yup.string().required("Full Name is required"),
-  email: Yup.string().email("Invalid email").required("Email is required"),
-  password: Yup.string()
-    .min(6, "Password must be at least 6 characters")
-    .required("Password is required"),
-  country: Yup.string().optional(),
-});
 
 const ZIPO_COLORS = {
   primary: "#1E1E1E",
@@ -37,6 +29,7 @@ const ZIPO_COLORS = {
   black: "#000000",
 };
 
+// Country list
 const COUNTRIES = [
   { code: "CA", name: "Canada", flag: "🇨🇦" },
   { code: "ID", name: "Indonesia", flag: "🇮🇩" },
@@ -45,10 +38,33 @@ const COUNTRIES = [
   { code: "SG", name: "Singapore", flag: "🇸🇬" },
 ];
 
+// --------- Validation schema ----------
+const passwordRegex =
+  /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[ !"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]).{8,}$/;
+
+const SignupSchema = Yup.object({
+  fullName: Yup.string().required("Full Name is required"),
+  email: Yup.string().email("Invalid email").required("Email is required"),
+  password: Yup.string()
+    .matches(
+      passwordRegex,
+      "Min 8 chars, 1 upper, 1 lower, 1 number, 1 special"
+    )
+    .required("Password is required"),
+  country: Yup.string().optional(),
+  terms: Yup.boolean().oneOf(
+    [true],
+    "You must agree to the terms and conditions"
+  ),
+});
+
+const API_BASE = "https://your-api-url.example.com"; // TODO: replace with your backend URL
+
 export default function SignupScreen() {
   const router = useRouter();
   const [countryOpen, setCountryOpen] = useState(false);
   const dropdownAnim = useRef(new Animated.Value(0)).current;
+  const [showPassword, setShowPassword] = useState(false);
 
   const {
     setValue,
@@ -62,21 +78,14 @@ export default function SignupScreen() {
       email: "",
       password: "",
       country: "",
+      terms: false,
     },
   });
 
   const selectedCountry = watch("country");
+  const termsAccepted = watch("terms");
 
-  const onSubmit = async (data: any) => {
-    console.log("Sign up data:", data);
-
-    // TODO: call backend /register to create user + send OTP
-    router.push({
-      pathname: "/verify-otp",
-      params: { email: data.email },
-    });
-  };
-
+  // --- dropdown animation ---
   const openDropdown = () => {
     setCountryOpen(true);
     Animated.timing(dropdownAnim, {
@@ -105,6 +114,39 @@ export default function SignupScreen() {
     closeDropdown();
   };
 
+  // --- backend call ---
+  const signupRequest = async (payload: any) => {
+    const res = await fetch(`${API_BASE}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.message || "Signup failed");
+    }
+  };
+
+  const onSubmit = async (data: any) => {
+    try {
+      await signupRequest({
+        fullName: data.fullName,
+        email: data.email,
+        password: data.password,
+        country: data.country,
+      });
+
+      router.push({
+        pathname: "/verify-otp",
+        params: { email: data.email },
+      });
+    } catch (e: any) {
+      console.warn("Signup error", e.message);
+      // TODO: show a toast or inline error
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -112,7 +154,7 @@ export default function SignupScreen() {
         contentContainerStyle={styles.container}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header (same structure as login) */}
+        {/* Header */}
         <View style={styles.headerArea}>
           <View style={styles.logoContainer}>
             <FontAwesome name="car" size={18} color={ZIPO_COLORS.secondary} />
@@ -123,7 +165,7 @@ export default function SignupScreen() {
         {/* Title */}
         <Text style={styles.title}>Sign Up</Text>
 
-        {/* Inputs section */}
+        {/* Inputs */}
         <View style={styles.inputGroup}>
           <TextInput
             style={styles.input}
@@ -140,26 +182,34 @@ export default function SignupScreen() {
             placeholder="Email Address"
             placeholderTextColor={ZIPO_COLORS.grayText}
             keyboardType="email-address"
+            autoCapitalize="none"
             onChangeText={(text) => setValue("email", text)}
           />
           {errors.email && (
             <Text style={styles.errorText}>{errors.email.message}</Text>
           )}
 
+          {/* Password + toggle */}
           <View style={styles.passwordWrapper}>
             <TextInput
               style={[styles.input, styles.passwordInput]}
               placeholder="Password"
               placeholderTextColor={ZIPO_COLORS.grayText}
-              secureTextEntry
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
               onChangeText={(text) => setValue("password", text)}
             />
-            <FontAwesome
-              name="eye-slash"
-              size={18}
-              color={ZIPO_COLORS.grayText}
+            <TouchableOpacity
               style={styles.passwordIcon}
-            />
+              onPress={() => setShowPassword((prev) => !prev)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <FontAwesome
+                name={showPassword ? "eye" : "eye-slash"}
+                size={18}
+                color={ZIPO_COLORS.grayText}
+              />
+            </TouchableOpacity>
           </View>
           {errors.password && (
             <Text style={styles.errorText}>{errors.password.message}</Text>
@@ -240,9 +290,40 @@ export default function SignupScreen() {
           {errors.country && (
             <Text style={styles.errorText}>{errors.country.message}</Text>
           )}
+
+          {/* Terms checkbox */}
+          <View style={styles.termsRow}>
+            <TouchableOpacity
+              onPress={() =>
+                setValue("terms", !termsAccepted, { shouldValidate: true })
+              }
+              style={styles.checkboxWrapper}
+            >
+              <View
+                style={[
+                  styles.checkbox,
+                  termsAccepted && styles.checkboxChecked,
+                ]}
+              >
+                {termsAccepted && (
+                  <FontAwesome name="check" size={12} color="#fff" />
+                )}
+              </View>
+            </TouchableOpacity>
+
+            <Text style={styles.termsText}>
+              I agree to the{" "}
+              <Text style={styles.termsLink} onPress={() => router.push("/")}>
+                terms and conditions
+              </Text>
+            </Text>
+          </View>
+          {errors.terms && (
+            <Text style={styles.errorText}>{errors.terms.message}</Text>
+          )}
         </View>
 
-        {/* Primary Sign up button (rounded, same as login) */}
+        {/* Primary Sign up button */}
         <Button
           title="Sign up"
           variant="primary"
@@ -251,7 +332,7 @@ export default function SignupScreen() {
           style={styles.primaryButton}
         />
 
-        {/* Outline Login button (rounded) */}
+        {/* Outline Login button */}
         <Button
           title="Login"
           variant="secondary"
@@ -266,15 +347,8 @@ export default function SignupScreen() {
           <View style={styles.divider} />
         </View>
 
-        {/* Social buttons – centered icon + text, same width */}
-        <Button
-          title="Sign up with Apple"
-          variant="social"
-          iconName="apple"
-          onPress={() => {}}
-        />
-
-        <View style={{ height: 10 }} />
+        {/* Social buttons – Apple hidden for now */}
+        {/* Apple signup disabled */}
 
         <Button
           title="Sign up with Google"
@@ -365,11 +439,11 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  // Country dropdown styles
+  // Country dropdown
   countryWrapper: {
     marginTop: 2,
     position: "relative",
-    zIndex: 10, // keep it above other content
+    zIndex: 10,
   },
   countrySelector: {
     backgroundColor: ZIPO_COLORS.lightGray,
@@ -422,6 +496,39 @@ const styles = StyleSheet.create({
   dropdownLabel: {
     fontSize: 15,
     color: ZIPO_COLORS.black,
+  },
+
+  // Terms
+  termsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  checkboxWrapper: {
+    marginRight: 10,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: ZIPO_COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  checkboxChecked: {
+    backgroundColor: ZIPO_COLORS.primary,
+    borderColor: ZIPO_COLORS.primary,
+  },
+  termsText: {
+    flex: 1,
+    fontSize: 13,
+    color: ZIPO_COLORS.grayText,
+  },
+  termsLink: {
+    color: ZIPO_COLORS.primary,
+    fontWeight: "600",
   },
 
   primaryButton: {
