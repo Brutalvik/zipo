@@ -1,40 +1,40 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-// Define the shape of the data in the slice (state)
-interface AuthState {
-  isAuthenticated: boolean;
-  userId: string | null;
-  userName: string | null;
+export interface User {
+  id: string;
+  name: string; // display name or derived from email
+  email: string;
+  photoURL?: string | null;
+  phoneNumber?: string | null;
+  emailVerified?: boolean;
+  providerId?: string | null;
 }
 
-// Set the initial state
+interface AuthState {
+  isAuthenticated: boolean;
+  user: User | null;
+}
+
 const initialState: AuthState = {
   isAuthenticated: false,
-  userId: null,
-  userName: null,
+  user: null,
 };
 
 export const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    // Reducer to handle successful login
-    signIn: (state, action: PayloadAction<{ id: string; name: string }>) => {
+    // Store the FULL user object here
+    signIn: (state, action: PayloadAction<User>) => {
       state.isAuthenticated = true;
-      state.userId = action.payload.id;
-      state.userName = action.payload.name;
+      state.user = action.payload;
     },
-    // Reducer to handle logout
     signOut: (state) => {
       state.isAuthenticated = false;
-      state.userId = null;
-      state.userName = null;
+      state.user = null;
     },
   },
 });
 
-// Export the actions
 export const { signIn, signOut } = authSlice.actions;
-
-// Export the reducer for the store
 export default authSlice.reducer;

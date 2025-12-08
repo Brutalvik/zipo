@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
 
-import Button from "@/app/components/Button/Button";
+import Button from "@/components/Button/Button";
 
 import { useForm, SubmitHandler } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
@@ -27,7 +27,7 @@ import {
   updateProfile,
   sendEmailVerification,
 } from "firebase/auth";
-import { auth } from "@/app/services/firebase";
+import { auth } from "@/services/firebase";
 
 const ZIPO_COLORS = {
   primary: "#1E1E1E",

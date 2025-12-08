@@ -5,9 +5,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
 
-import Button from "@/app/components/Button/Button";
+import Button from "@/components/Button/Button";
 
-import { auth } from "@/app/services/firebase";
+import { auth } from "@/services/firebase";
 import { sendEmailVerification } from "firebase/auth";
 
 const ZIPO_COLORS = {
@@ -84,8 +84,7 @@ export default function VerifyOtpScreen() {
       const refreshed = auth.currentUser;
 
       if (refreshed && refreshed.emailVerified) {
-        // Email now verified -> go to main app
-        router.replace("/(tabs)");
+        router.replace("/verify-phone");
       } else {
         Alert.alert(
           "Not verified yet",

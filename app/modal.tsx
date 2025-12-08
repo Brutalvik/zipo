@@ -2,7 +2,7 @@ import React from "react";
 import { StyleSheet, View, Text } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Button from "@/app/components/Button/Button";
+import Button from "@/components/Button/Button";
 
 export default function ModalScreen() {
   const router = useRouter();

@@ -2,9 +2,9 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-import Button from "@/app/components/Button/Button";
+import Button from "@/components/Button/Button";
 import { signOut as fbSignOut } from "firebase/auth";
-import { auth } from "@/app/services/firebase";
+import { auth } from "@/services/firebase";
 import { useAppDispatch } from "@/redux/hooks";
 import { signOut as storeSignOut } from "@/redux/slices/authSlice";
 

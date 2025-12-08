@@ -12,7 +12,7 @@ import {
 import { Stack, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { FontAwesome } from "@expo/vector-icons";
-import Button from "@/app/components/Button/Button";
+import Button from "@/components/Button/Button";
 
 const { width } = Dimensions.get("window");
 

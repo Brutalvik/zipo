@@ -12,8 +12,8 @@ import { Link, Stack, useRouter } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import Button from "@/app/components/Button/Button";
-import { auth } from "@/app/services/firebase";
+import Button from "@/components/Button/Button";
+import { auth } from "@/services/firebase";
 import { useAppDispatch } from "@/redux/hooks";
 import { signIn } from "@/redux/slices/authSlice";
 
@@ -59,7 +59,18 @@ export default function LoginScreen() {
         return;
       }
 
-      dispatch(signIn({ id: user.uid, name: user.displayName || email }));
+      // 👇 Build the full user object for Redux
+      const userObject = {
+        id: user.uid,
+        name: user.displayName || email,
+        email: user.email ?? email,
+        photoURL: user.photoURL,
+        phoneNumber: user.phoneNumber,
+        emailVerified: user.emailVerified,
+        providerId: user.providerId ?? null,
+      };
+
+      dispatch(signIn(userObject));
       router.replace("/(tabs)");
     } catch (error: any) {
       let errorMessage = "Login failed. Please check your credentials.";

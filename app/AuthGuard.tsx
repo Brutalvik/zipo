@@ -1,18 +1,16 @@
-// app/AuthGuard.tsx
 import React, { useEffect, useState, memo } from "react";
 import { useSegments, useRouter } from "expo-router";
-import { onAuthStateChanged, User } from "firebase/auth";
-import { auth } from "@/app/services/firebase";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { auth } from "@/services/firebase";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
-import { signIn, signOut } from "@/redux/slices/authSlice";
+import { signIn } from "@/redux/slices/authSlice";
 
-// Routes that do NOT require login
 const PUBLIC_ROUTES = [
   "/",
   "/login",
   "/signup",
   "/verify-email",
-  "/onboarding",
+  "/verify-phone",
 ];
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -20,56 +18,91 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const dispatch = useAppDispatch();
 
-  const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
+  const { isAuthenticated, user } = useAppSelector((state) => state.auth);
   const [isFirebaseInitialized, setIsFirebaseInitialized] = useState(false);
 
-  // Listen to Firebase auth state
+  // 1) Listen to Firebase auth state and SIGN IN if needed
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user: User | null) => {
-      if (user && user.emailVerified) {
-        // Logged in + email verified
-        dispatch(
-          signIn({
-            id: user.uid,
-            name: user.displayName || user.email || "",
-          })
-        );
-      } else {
-        // Not logged in or not verified
-        dispatch(signOut());
-      }
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (firebaseUser: FirebaseUser | null) => {
+        if (firebaseUser && firebaseUser.emailVerified) {
+          const userPayload = {
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || firebaseUser.email || "",
+            email: firebaseUser.email ?? "",
+            photoURL: firebaseUser.photoURL,
+            phoneNumber: firebaseUser.phoneNumber,
+            emailVerified: firebaseUser.emailVerified,
+            providerId: firebaseUser.providerId ?? null,
+          };
 
-      setIsFirebaseInitialized(true);
-    });
+          dispatch(signIn(userPayload));
+        }
+        setIsFirebaseInitialized(true);
+      }
+    );
 
     return unsubscribe;
   }, [dispatch]);
 
-  // Handle routing based on auth + current route
+  // 2) Handle routing based on Redux auth + current route + phone verification
   useEffect(() => {
     if (!isFirebaseInitialized) return;
 
     let currentPath: string;
-
-    // When at root '/', segments is []
     if (segments.length === 0) {
       currentPath = "/";
     } else {
-      // First segment maps to "/login", "/signup", "/(tabs)", etc.
       currentPath = `/${segments[0]}`;
     }
 
     const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
     const appHome = "/(tabs)";
+    const hasPhoneVerified = !!user?.phoneNumber;
 
-    if (isAuthenticated && isPublicRoute) {
-      // Authenticated user on public route -> send to main app
-      router.replace(appHome);
-    } else if (!isAuthenticated && !isPublicRoute) {
-      // Unauthenticated user on protected route -> send to landing page
-      router.replace("/");
+    // 🔐 NOT authenticated
+    if (!isAuthenticated) {
+      // If trying to access a protected route, kick back to Get Started
+      if (!isPublicRoute) {
+        router.replace("/login");
+      }
+      return;
     }
-  }, [isAuthenticated, isFirebaseInitialized, segments, router]);
+
+    // ✅ Authenticated
+
+    // Authenticated + on a public route → redirect to home / verify-phone
+    if (isAuthenticated && isPublicRoute && currentPath !== "/verify-phone") {
+      if (!hasPhoneVerified) {
+        router.replace("/verify-phone");
+        return;
+      }
+
+      router.replace(appHome);
+      return;
+    }
+
+    // Authenticated but phone NOT verified → force /verify-phone
+    if (
+      isAuthenticated &&
+      !hasPhoneVerified &&
+      currentPath !== "/verify-phone"
+    ) {
+      router.replace("/verify-phone");
+      return;
+    }
+
+    // Authenticated + phone verified + stuck on /verify-phone → send home
+    if (
+      isAuthenticated &&
+      hasPhoneVerified &&
+      currentPath === "/verify-phone"
+    ) {
+      router.replace(appHome);
+      return;
+    }
+  }, [isAuthenticated, isFirebaseInitialized, segments, router, user]);
 
   if (!isFirebaseInitialized) return null;
 
