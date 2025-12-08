@@ -13,7 +13,7 @@ import { FontAwesome } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import Button from "@/app/components/Button/Button";
-import { auth } from "@/services/firebase";
+import { auth } from "@/app/services/firebase";
 import { useAppDispatch } from "@/redux/hooks";
 import { signIn } from "@/redux/slices/authSlice";
 

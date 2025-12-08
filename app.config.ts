@@ -1,7 +1,7 @@
-// app.config.ts
 import "dotenv/config";
+import { ExpoConfig } from "expo/config";
 
-module.exports = {
+const config: ExpoConfig = {
   name: "Zipo",
   slug: "zipo-app",
   version: "1.0.0",
@@ -16,9 +16,7 @@ module.exports = {
       messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
       appId: process.env.FIREBASE_APP_ID,
     },
-    // Allows other environment variables to be passed
-    eas: {
-      projectId: "your-eas-project-id",
-    },
   },
 };
+
+export default config;

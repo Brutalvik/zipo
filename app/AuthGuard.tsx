@@ -1,62 +1,79 @@
 // app/AuthGuard.tsx
-import React, { useEffect, useState, memo } from "react"; // Added memo
+import React, { useEffect, useState, memo } from "react";
 import { useSegments, useRouter } from "expo-router";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "@/services/firebase";
+import { onAuthStateChanged, User } from "firebase/auth";
+import { auth } from "@/app/services/firebase";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import { signIn, signOut } from "@/redux/slices/authSlice";
 
-// List of routes accessible to UNAUTHENTICATED users
-const PUBLIC_ROUTES = ["/", "/login", "/signup", "/verify-otp", "/onboarding"];
+// Routes that do NOT require login
+const PUBLIC_ROUTES = [
+  "/",
+  "/login",
+  "/signup",
+  "/verify-email",
+  "/onboarding",
+];
 
-/**
- * Checks authentication status and redirects user based on route segments.
- * Renders children (the navigation stack) once the Firebase session is verified.
- */
 function AuthGuard({ children }: { children: React.ReactNode }) {
+  const segments: string[] = useSegments();
   const router = useRouter();
-  const segments = useSegments();
   const dispatch = useAppDispatch();
-  const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
 
+  const isAuthenticated = useAppSelector((state) => state.auth.isAuthenticated);
   const [isFirebaseInitialized, setIsFirebaseInitialized] = useState(false);
 
+  // Listen to Firebase auth state
   useEffect(() => {
-    // Firebase listener to keep Redux state synchronized with Firebase
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        // User is signed in via Firebase
+    const unsubscribe = onAuthStateChanged(auth, (user: User | null) => {
+      if (user && user.emailVerified) {
+        // Logged in + email verified
         dispatch(
           signIn({
             id: user.uid,
-            name: user.displayName || user.email || "User",
+            name: user.displayName || user.email || "",
           })
         );
       } else {
-        // User is signed out
+        // Not logged in or not verified
         dispatch(signOut());
       }
+
       setIsFirebaseInitialized(true);
     });
 
-    return () => unsubscribe();
-  }, []);
+    return unsubscribe;
+  }, [dispatch]);
 
+  // Handle routing based on auth + current route
   useEffect(() => {
-    // 1. Wait until Firebase has checked the user's session from AsyncStorage/Cache
-    if (!isFirebaseInitialized) return; // 2. Check if the current segment is public or private // segments[0] is the top-level route (e.g., 'login', '(tabs)', 'index')
+    if (!isFirebaseInitialized) return;
 
-    const currentPath = `/${segments[0]}`;
-    const isPublicRoute = PUBLIC_ROUTES.includes(currentPath); // Get the correct home path
+    let currentPath: string;
+
+    // When at root '/', segments is []
+    if (segments.length === 0) {
+      currentPath = "/";
+    } else {
+      // First segment maps to "/login", "/signup", "/(tabs)", etc.
+      currentPath = `/${segments[0]}`;
+    }
+
+    const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
     const appHome = "/(tabs)";
 
     if (isAuthenticated && isPublicRoute) {
+      // Authenticated user on public route -> send to main app
       router.replace(appHome);
     } else if (!isAuthenticated && !isPublicRoute) {
-      router.replace("/login");
+      // Unauthenticated user on protected route -> send to landing page
+      router.replace("/");
     }
-  }, [isAuthenticated, isFirebaseInitialized, segments]);
-  return isFirebaseInitialized ? <>{children}</> : null;
+  }, [isAuthenticated, isFirebaseInitialized, segments, router]);
+
+  if (!isFirebaseInitialized) return null;
+
+  return <>{children}</>;
 }
 
 export default memo(AuthGuard);
