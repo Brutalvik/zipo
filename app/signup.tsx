@@ -1,9 +1,17 @@
-import React from "react";
-import { View, Text, TextInput, StyleSheet, ScrollView } from "react-native";
+import React, { useState, useRef } from "react";
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Animated,
+  Pressable,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
-
 import Button from "@/app/components/Button/Button";
 
 import { useForm } from "react-hook-form";
@@ -29,12 +37,23 @@ const ZIPO_COLORS = {
   black: "#000000",
 };
 
+const COUNTRIES = [
+  { code: "CA", name: "Canada", flag: "🇨🇦" },
+  { code: "ID", name: "Indonesia", flag: "🇮🇩" },
+  { code: "MY", name: "Malaysia", flag: "🇲🇾" },
+  { code: "IN", name: "India", flag: "🇮🇳" },
+  { code: "SG", name: "Singapore", flag: "🇸🇬" },
+];
+
 export default function SignupScreen() {
   const router = useRouter();
+  const [countryOpen, setCountryOpen] = useState(false);
+  const dropdownAnim = useRef(new Animated.Value(0)).current;
 
   const {
     setValue,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm({
     resolver: yupResolver(SignupSchema),
@@ -46,6 +65,8 @@ export default function SignupScreen() {
     },
   });
 
+  const selectedCountry = watch("country");
+
   const onSubmit = async (data: any) => {
     console.log("Sign up data:", data);
 
@@ -54,6 +75,34 @@ export default function SignupScreen() {
       pathname: "/verify-otp",
       params: { email: data.email },
     });
+  };
+
+  const openDropdown = () => {
+    setCountryOpen(true);
+    Animated.timing(dropdownAnim, {
+      toValue: 1,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const closeDropdown = () => {
+    Animated.timing(dropdownAnim, {
+      toValue: 0,
+      duration: 140,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setCountryOpen(false);
+    });
+  };
+
+  const toggleDropdown = () => {
+    countryOpen ? closeDropdown() : openDropdown();
+  };
+
+  const handleSelectCountry = (countryName: string) => {
+    setValue("country", countryName, { shouldValidate: true });
+    closeDropdown();
   };
 
   return (
@@ -116,12 +165,81 @@ export default function SignupScreen() {
             <Text style={styles.errorText}>{errors.password.message}</Text>
           )}
 
-          <TextInput
-            style={styles.input}
-            placeholder="Country"
-            placeholderTextColor={ZIPO_COLORS.grayText}
-            onChangeText={(text) => setValue("country", text)}
-          />
+          {/* Country dropdown */}
+          <View style={styles.countryWrapper}>
+            <TouchableOpacity
+              style={styles.countrySelector}
+              activeOpacity={0.8}
+              onPress={toggleDropdown}
+            >
+              <Text
+                style={[
+                  styles.countryText,
+                  !selectedCountry && { color: ZIPO_COLORS.grayText },
+                ]}
+              >
+                {selectedCountry || "Country"}
+              </Text>
+              <FontAwesome
+                name={countryOpen ? "chevron-up" : "chevron-down"}
+                size={14}
+                color={ZIPO_COLORS.grayText}
+              />
+            </TouchableOpacity>
+
+            {countryOpen && (
+              <Animated.View
+                style={[
+                  styles.dropdown,
+                  {
+                    opacity: dropdownAnim,
+                    transform: [
+                      {
+                        translateY: dropdownAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [-5, 0],
+                        }),
+                      },
+                      {
+                        scaleY: dropdownAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.95, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                {COUNTRIES.map((country) => (
+                  <Pressable
+                    key={country.code}
+                    onPress={() => handleSelectCountry(country.name)}
+                    style={({ pressed }) => [
+                      styles.dropdownItem,
+                      selectedCountry === country.name &&
+                        styles.dropdownItemSelected,
+                      pressed && styles.dropdownItemPressed,
+                    ]}
+                  >
+                    <Text style={styles.flag}>{country.flag}</Text>
+                    <Text
+                      style={[
+                        styles.dropdownLabel,
+                        selectedCountry === country.name && {
+                          fontWeight: "600",
+                        },
+                      ]}
+                    >
+                      {country.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </Animated.View>
+            )}
+          </View>
+          {errors.country && (
+            <Text style={styles.errorText}>{errors.country.message}</Text>
+          )}
         </View>
 
         {/* Primary Sign up button (rounded, same as login) */}
@@ -170,7 +288,7 @@ export default function SignupScreen() {
           Already have an account?
           <Text style={styles.footerLink} onPress={() => router.push("/login")}>
             {" "}
-            Sign Up.
+            Login.
           </Text>
         </Text>
       </ScrollView>
@@ -232,11 +350,9 @@ const styles = StyleSheet.create({
   },
   passwordWrapper: {
     position: "relative",
-    marginBottom: 12,
   },
   passwordInput: {
     paddingRight: 40,
-    marginBottom: 0,
   },
   passwordIcon: {
     position: "absolute",
@@ -247,6 +363,65 @@ const styles = StyleSheet.create({
     color: "red",
     fontSize: 12,
     marginBottom: 6,
+  },
+
+  // Country dropdown styles
+  countryWrapper: {
+    marginTop: 2,
+    position: "relative",
+    zIndex: 10, // keep it above other content
+  },
+  countrySelector: {
+    backgroundColor: ZIPO_COLORS.lightGray,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: ZIPO_COLORS.border,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  countryText: {
+    fontSize: 15,
+    color: ZIPO_COLORS.black,
+  },
+  dropdown: {
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    right: 0,
+    marginTop: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: ZIPO_COLORS.border,
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  dropdownItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dropdownItemPressed: {
+    backgroundColor: "#F2F2F2",
+  },
+  dropdownItemSelected: {
+    backgroundColor: "#F7F7F7",
+  },
+  flag: {
+    fontSize: 18,
+    marginRight: 10,
+  },
+  dropdownLabel: {
+    fontSize: 15,
+    color: ZIPO_COLORS.black,
   },
 
   primaryButton: {
