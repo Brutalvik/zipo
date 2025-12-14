@@ -1,5 +1,5 @@
 // app/verify-phone.tsx
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -16,21 +16,27 @@ import {
   ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
 
 import Button from "@/components/Button/Button";
-
 import { auth } from "@/services/firebase";
 import { PhoneAuthProvider, linkWithCredential } from "firebase/auth";
 import { FirebaseRecaptchaVerifierModal } from "expo-firebase-recaptcha";
 import Constants from "expo-constants";
 
+import {
+  setPhoneRemindLater,
+  getRemindAfterMs,
+  phoneSkipSession,
+  phoneVerifyFailed,
+  phoneVerifySuccess,
+} from "@/lib/phoneGate";
+
 const ZIPO_COLORS = {
   primary: "#111827",
   secondary: "#F9FAFB",
   grayText: "#6B7280",
-  lightGray: "#E5E7EB",
   border: "#D1D5DB",
   black: "#000000",
   accent: "#111827",
@@ -38,7 +44,6 @@ const ZIPO_COLORS = {
 
 const CODE_LENGTH = 6;
 
-// same list as signup + dial codes
 const COUNTRIES = [
   { code: "CA", name: "Canada", flag: "🇨🇦", dialCode: "+1" },
   { code: "ID", name: "Indonesia", flag: "🇮🇩", dialCode: "+62" },
@@ -55,12 +60,8 @@ function normalizeLocalNumber(local: string): string {
   return digits;
 }
 
-function formatInternationalDisplay(
-  localDigits: string,
-  dialCode: string
-): { e164: string; display: string } {
+function formatInternationalDisplay(localDigits: string, dialCode: string) {
   const e164 = `${dialCode}${localDigits}`;
-
   const groups: string[] = [];
   const n = localDigits.length;
 
@@ -77,24 +78,30 @@ function formatInternationalDisplay(
     }
     groups.push(localDigits.slice(n - lastGroupLen));
   } else {
-    for (let i = 0; i < n; i += 3) {
-      groups.push(localDigits.slice(i, i + 3));
-    }
+    for (let i = 0; i < n; i += 3) groups.push(localDigits.slice(i, i + 3));
   }
 
-  const display = `${dialCode}-${groups.join("-")}`;
-  return { e164, display };
+  return { e164, display: `${dialCode}-${groups.join("-")}` };
 }
 
-// Simple mask: +62******99
-function maskPhone(dialCode: string, localDigits: string): string {
+function maskPhone(dialCode: string, localDigits: string) {
   if (!localDigits) return dialCode;
   const last2 = localDigits.slice(-2);
   return `${dialCode}******${last2}`;
 }
 
+function formatCountdown(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function VerifyPhoneScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ next?: string; from?: string }>();
+  const nextRoute = params?.next ? String(params.next) : "/(tabs)";
+  const from = params?.from ? String(params.from) : "unknown";
 
   const [selectedCountry, setSelectedCountry] = useState<Country>(COUNTRIES[1]); // default ID
   const [rawPhone, setRawPhone] = useState("");
@@ -108,12 +115,28 @@ export default function VerifyPhoneScreen() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [sentToMasked, setSentToMasked] = useState<string | null>(null);
 
-  // recaptcha for phone auth
+  const [cooldownMs, setCooldownMs] = useState(0);
+
   const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal | null>(null);
   const firebaseConfig = Constants.expoConfig?.extra?.firebaseConfig;
 
-  // hidden input ref for OTP
   const codeInputRef = useRef<TextInput | null>(null);
+
+  useEffect(() => {
+    let t: any;
+
+    (async () => {
+      const ms = await getRemindAfterMs();
+      setCooldownMs(ms);
+    })();
+
+    t = setInterval(async () => {
+      const ms = await getRemindAfterMs();
+      setCooldownMs(ms);
+    }, 1000);
+
+    return () => clearInterval(t);
+  }, []);
 
   const openDropdown = () => {
     setDropdownOpen(true);
@@ -123,43 +146,27 @@ export default function VerifyPhoneScreen() {
       useNativeDriver: true,
     }).start();
   };
-
   const closeDropdown = () => {
     Animated.timing(dropdownAnim, {
       toValue: 0,
       duration: 130,
       useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setDropdownOpen(false);
-    });
+    }).start(({ finished }) => finished && setDropdownOpen(false));
   };
-
-  const toggleDropdown = () => {
+  const toggleDropdown = () =>
     dropdownOpen ? closeDropdown() : openDropdown();
-  };
-
-  const handleSelectCountry = (country: Country) => {
-    setSelectedCountry(country);
-    closeDropdown();
-  };
 
   const handleSendCode = async () => {
     const user = auth.currentUser;
     if (!user) {
-      Alert.alert(
-        "Not signed in",
-        "We couldn't find a logged-in user. Please sign in again."
-      );
+      Alert.alert("Not signed in", "Please sign in again.");
       router.replace("/login");
       return;
     }
 
     const localDigits = normalizeLocalNumber(rawPhone);
     if (!localDigits || localDigits.length < 7) {
-      Alert.alert(
-        "Invalid number",
-        "Please enter a valid phone number with enough digits."
-      );
+      Alert.alert("Invalid number", "Please enter a valid phone number.");
       return;
     }
 
@@ -167,17 +174,15 @@ export default function VerifyPhoneScreen() {
       localDigits,
       selectedCountry.dialCode
     );
-
     const masked = maskPhone(selectedCountry.dialCode, localDigits);
     setSentToMasked(masked);
 
     try {
       setIsSending(true);
-
       const provider = new PhoneAuthProvider(auth);
       const id = await provider.verifyPhoneNumber(
         e164,
-        // @ts-ignore – recaptchaVerifier type not perfect in TS
+        // @ts-ignore
         recaptchaVerifier.current
       );
 
@@ -191,34 +196,23 @@ export default function VerifyPhoneScreen() {
       );
     } catch (error: any) {
       console.warn("Phone verify send error:", error);
-      Alert.alert(
-        "Error",
-        error?.message || "We couldn't send the SMS. Please try again."
-      );
+      Alert.alert("Error", error?.message || "We couldn't send the SMS.");
     } finally {
       setIsSending(false);
     }
   };
 
-  const handleChangeCode = (text: string) => {
-    const digitsOnly = text.replace(/\D/g, "");
-    setVerificationCode(digitsOnly.slice(0, CODE_LENGTH));
-  };
-
   const handleVerifyCode = async () => {
     const user = auth.currentUser;
     if (!user || !verificationId) {
-      Alert.alert(
-        "Missing info",
-        "We’re missing the verification details. Please try again."
-      );
+      Alert.alert("Missing info", "Please try again.");
       return;
     }
 
     if (!verificationCode || verificationCode.length !== CODE_LENGTH) {
       Alert.alert(
         "Invalid code",
-        `Please enter the ${CODE_LENGTH}-digit code from the SMS.`
+        `Please enter the ${CODE_LENGTH}-digit code.`
       );
       return;
     }
@@ -230,26 +224,38 @@ export default function VerifyPhoneScreen() {
         verificationId,
         verificationCode
       );
-
-      // link phone to existing email user
       await linkWithCredential(user, credential);
 
+      await phoneVerifySuccess();
+
       Alert.alert("Phone verified", "Your phone number has been verified.");
-      router.replace("/(tabs)");
+      router.replace(nextRoute);
     } catch (error: any) {
+      await phoneVerifyFailed(error?.message);
       console.warn("Phone verify confirm error:", error);
       Alert.alert(
         "Verification failed",
-        error?.message || "The code was invalid or expired. Please try again."
+        error?.message || "The code was invalid or expired."
       );
     } finally {
       setIsVerifying(false);
     }
   };
 
-  const handleSkipForNow = () => {
-    // User can skip; AuthGuard can still re-check phone later if you want
-    router.replace("/(tabs)");
+  const handleSkipForNow = async () => {
+    await phoneSkipSession(from);
+    router.replace(nextRoute);
+  };
+
+  const handleRemindLater = async () => {
+    // Pick a default you like; 30 minutes is common
+    await setPhoneRemindLater(30);
+    router.replace(nextRoute);
+  };
+
+  const handleChangeCode = (text: string) => {
+    const digitsOnly = text.replace(/\D/g, "");
+    setVerificationCode(digitsOnly.slice(0, CODE_LENGTH));
   };
 
   const localDigits = normalizeLocalNumber(rawPhone);
@@ -259,7 +265,6 @@ export default function VerifyPhoneScreen() {
           .display
       : "";
 
-  // For code UI: pad to length 6 so we always have slots
   const codeChars = verificationCode
     .padEnd(CODE_LENGTH, " ")
     .split("")
@@ -267,7 +272,6 @@ export default function VerifyPhoneScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* Recaptcha modal for phone auth */}
       <FirebaseRecaptchaVerifierModal
         ref={recaptchaVerifier}
         firebaseConfig={firebaseConfig}
@@ -276,7 +280,6 @@ export default function VerifyPhoneScreen() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
@@ -284,7 +287,6 @@ export default function VerifyPhoneScreen() {
             keyboardShouldPersistTaps="handled"
           >
             <View style={styles.container}>
-              {/* Header */}
               <View style={styles.headerRow}>
                 <View style={styles.logoContainer}>
                   <FontAwesome
@@ -296,17 +298,25 @@ export default function VerifyPhoneScreen() {
                 <Text style={styles.logoText}>Zipo</Text>
               </View>
 
-              {/* Content */}
               <View style={styles.content}>
                 {step === "phone" && (
                   <>
                     <Text style={styles.title}>Verify your phone number</Text>
                     <Text style={styles.subtitle}>
-                      We’ll use your phone to keep your bookings secure and
-                      share important updates.
+                      We’ll use your phone to keep bookings secure and share
+                      important updates.
                     </Text>
 
-                    {/* Country selector */}
+                    {/* Cooldown hint if "remind later" is active */}
+                    {cooldownMs > 0 && (
+                      <View style={styles.cooldownPill}>
+                        <Text style={styles.cooldownText}>
+                          Reminder active — we’ll ask again in{" "}
+                          {formatCountdown(cooldownMs)}
+                        </Text>
+                      </View>
+                    )}
+
                     <View style={styles.countryWrapper}>
                       <TouchableOpacity
                         style={styles.countrySelector}
@@ -353,12 +363,13 @@ export default function VerifyPhoneScreen() {
                           {COUNTRIES.map((country) => (
                             <Pressable
                               key={country.code}
-                              onPress={() => handleSelectCountry(country)}
+                              onPress={() => {
+                                setSelectedCountry(country);
+                                closeDropdown();
+                              }}
                               style={({ pressed }) => [
                                 styles.dropdownItem,
                                 pressed && styles.dropdownPressed,
-                                selectedCountry.code === country.code &&
-                                  styles.dropdownSelected,
                               ]}
                             >
                               <Text style={styles.flag}>{country.flag}</Text>
@@ -374,7 +385,6 @@ export default function VerifyPhoneScreen() {
                       )}
                     </View>
 
-                    {/* Phone input */}
                     <View style={styles.phoneWrapper}>
                       <TextInput
                         style={styles.input}
@@ -385,15 +395,11 @@ export default function VerifyPhoneScreen() {
                         onChangeText={setRawPhone}
                         returnKeyType="done"
                       />
-                      {preview ? (
-                        <Text style={styles.previewText}>
-                          We’ll verify {preview}
-                        </Text>
-                      ) : (
-                        <Text style={styles.previewText}>
-                          Example (ID): 0813 205 8699 → +62-813-205-8699
-                        </Text>
-                      )}
+                      <Text style={styles.previewText}>
+                        {preview
+                          ? `We’ll verify ${preview}`
+                          : "Enter your phone number to receive an SMS code."}
+                      </Text>
                     </View>
 
                     <View style={styles.buttonGroup}>
@@ -403,6 +409,17 @@ export default function VerifyPhoneScreen() {
                         onPress={handleSendCode}
                         isLoading={isSending}
                       />
+
+                      <TouchableOpacity
+                        onPress={handleRemindLater}
+                        disabled={isSending}
+                        style={styles.skipBtn}
+                      >
+                        <Text style={styles.skipText}>
+                          Remind me later (30 min)
+                        </Text>
+                      </TouchableOpacity>
+
                       <TouchableOpacity
                         onPress={handleSkipForNow}
                         disabled={isSending}
@@ -424,7 +441,6 @@ export default function VerifyPhoneScreen() {
                       </Text>
                     </Text>
 
-                    {/* 6-digit code boxes */}
                     <TouchableOpacity
                       activeOpacity={1}
                       onPress={() => codeInputRef.current?.focus()}
@@ -451,7 +467,6 @@ export default function VerifyPhoneScreen() {
                         })}
                       </View>
 
-                      {/* Hidden input that actually captures the code */}
                       <TextInput
                         ref={codeInputRef}
                         style={styles.hiddenInput}
@@ -470,6 +485,7 @@ export default function VerifyPhoneScreen() {
                         onPress={handleVerifyCode}
                         isLoading={isVerifying}
                       />
+
                       <TouchableOpacity
                         onPress={handleSendCode}
                         disabled={isSending || isVerifying}
@@ -480,14 +496,32 @@ export default function VerifyPhoneScreen() {
                           <Text style={styles.boldText}>Resend.</Text>
                         </Text>
                       </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={handleRemindLater}
+                        disabled={isSending || isVerifying}
+                        style={styles.skipBtn}
+                      >
+                        <Text style={styles.skipText}>
+                          Remind me later (30 min)
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={handleSkipForNow}
+                        disabled={isSending || isVerifying}
+                        style={styles.skipBtn}
+                      >
+                        <Text style={styles.skipText}>Skip for now</Text>
+                      </TouchableOpacity>
                     </View>
                   </>
                 )}
               </View>
 
               <Text style={styles.footerHint}>
-                Once your phone is verified you won’t be asked again on this
-                account.
+                You can verify later, but you may be asked again before booking
+                if not verified.
               </Text>
             </View>
           </ScrollView>
@@ -498,13 +532,8 @@ export default function VerifyPhoneScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
+  safeArea: { flex: 1, backgroundColor: "#F3F4F6" },
+  scrollContent: { flexGrow: 1 },
   container: {
     flex: 1,
     paddingHorizontal: 24,
@@ -512,10 +541,8 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     justifyContent: "space-between",
   },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+
+  headerRow: { flexDirection: "row", alignItems: "center" },
   logoContainer: {
     width: 32,
     height: 32,
@@ -530,35 +557,35 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     color: ZIPO_COLORS.black,
   },
-  content: {
-    marginTop: 32,
-  },
+
+  content: { marginTop: 28 },
   title: {
     fontSize: 24,
     fontWeight: "700",
     color: ZIPO_COLORS.primary,
     marginBottom: 8,
   },
-  subtitle: {
-    fontSize: 14,
-    color: ZIPO_COLORS.grayText,
-    marginBottom: 24,
-  },
+  subtitle: { fontSize: 14, color: ZIPO_COLORS.grayText, marginBottom: 14 },
   subtitleCenter: {
     fontSize: 14,
     color: ZIPO_COLORS.grayText,
     marginBottom: 24,
     textAlign: "center",
   },
-  boldText: {
-    fontWeight: "600",
-    color: ZIPO_COLORS.primary,
+  boldText: { fontWeight: "600", color: ZIPO_COLORS.primary },
+
+  cooldownPill: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 14,
   },
-  countryWrapper: {
-    marginBottom: 16,
-    position: "relative",
-    zIndex: 10,
-  },
+  cooldownText: { color: "#111827", fontSize: 13, fontWeight: "500" },
+
+  countryWrapper: { marginBottom: 16, position: "relative", zIndex: 10 },
   countrySelector: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -575,6 +602,7 @@ const styles = StyleSheet.create({
   flag: { fontSize: 18, marginRight: 8 },
   countryName: { fontSize: 14, color: ZIPO_COLORS.primary },
   countryDial: { fontSize: 14, color: ZIPO_COLORS.grayText },
+
   dropdown: {
     position: "absolute",
     top: "100%",
@@ -594,10 +622,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   dropdownPressed: { backgroundColor: "#F3F4F6" },
-  dropdownSelected: { backgroundColor: "#E5E7EB" },
   dropdownLabel: { fontSize: 14, color: ZIPO_COLORS.primary, flex: 1 },
   dropdownDial: { fontSize: 13, color: ZIPO_COLORS.grayText },
-  phoneWrapper: { marginTop: 8, marginBottom: 24 },
+
+  phoneWrapper: { marginTop: 8, marginBottom: 18 },
   input: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -607,31 +635,23 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
   },
-  previewText: {
-    marginTop: 6,
-    fontSize: 12,
-    color: ZIPO_COLORS.grayText,
-  },
-  buttonGroup: { marginTop: 16, gap: 8 },
-  skipBtn: {
-    alignSelf: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-  },
+  previewText: { marginTop: 6, fontSize: 12, color: ZIPO_COLORS.grayText },
+
+  buttonGroup: { marginTop: 8, gap: 10 },
+  skipBtn: { alignSelf: "center", paddingVertical: 6, paddingHorizontal: 8 },
   skipText: {
     fontSize: 13,
     color: ZIPO_COLORS.grayText,
     textDecorationLine: "underline",
   },
+
   footerHint: {
     fontSize: 12,
     color: ZIPO_COLORS.grayText,
     textAlign: "center",
   },
-  codeBoxesWrapper: {
-    alignItems: "center",
-    marginBottom: 24,
-  },
+
+  codeBoxesWrapper: { alignItems: "center", marginBottom: 24 },
   codeBoxesRow: {
     flexDirection: "row",
     justifyContent: "center",
@@ -656,22 +676,10 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 1,
   },
-  codeBoxText: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: ZIPO_COLORS.primary,
-  },
-  hiddenInput: {
-    position: "absolute",
-    opacity: 0,
-    height: 0,
-    width: 0,
-  },
-  resendBtn: {
-    alignSelf: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-  },
+  codeBoxText: { fontSize: 20, fontWeight: "600", color: ZIPO_COLORS.primary },
+  hiddenInput: { position: "absolute", opacity: 0, height: 0, width: 0 },
+
+  resendBtn: { alignSelf: "center", paddingVertical: 6, paddingHorizontal: 8 },
   resendText: {
     fontSize: 13,
     color: ZIPO_COLORS.grayText,

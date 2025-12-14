@@ -1,53 +1,161 @@
-// app/(tabs)/index.tsx
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
-import { useRouter } from "expo-router";
-import Button from "@/components/Button/Button";
-import { signOut as fbSignOut } from "firebase/auth";
-import { auth } from "@/services/firebase";
-import { useAppDispatch } from "@/redux/hooks";
-import { signOut as storeSignOut } from "@/redux/slices/authSlice";
+import React, { useMemo, useState } from "react";
+import {
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  View,
+  FlatList,
+  Text,
+} from "react-native";
 
-export default function TabOneScreen() {
-  const router = useRouter();
-  const dispatch = useAppDispatch();
+import SearchInput from "@/components/cars/SearchInput";
+import SectionHeader from "@/components/cars/SectionHeader";
 
-  const handleLogout = async () => {
-    try {
-      await fbSignOut(auth);
-      dispatch(storeSignOut());
-      router.replace("/");
-    } catch (e) {
-      console.warn("Logout error", e);
-    }
-  };
+import HomeHeader from "@/components/home/HomeHeader";
+import BrandCircle from "@/components/home/BrandCircle";
+import BestCarCard from "@/components/home/BestCarCard";
+import NearbyHeroCard from "@/components/home/NearbyHeroCard";
+
+import brandsRaw from "@/data/brands.json";
+import carsRaw from "@/data/cars.json";
+import type { Brand, Car } from "@/types/cars";
+import { COLORS } from "@/theme/ui";
+
+export default function HomeTab() {
+  const brands = brandsRaw as Brand[];
+  const cars = carsRaw as Car[];
+
+  const [query, setQuery] = useState("");
+  const [favs, setFavs] = useState<Record<string, boolean>>({});
+
+  const bestCars = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = cars
+      .slice()
+      .sort(
+        (a, b) =>
+          b.rating +
+          (b.isPopular ? 0.2 : 0) -
+          (a.rating + (a.isPopular ? 0.2 : 0))
+      );
+
+    if (!q) return base.slice(0, 6);
+    return base
+      .filter((c) =>
+        `${c.brand} ${c.name} ${c.location}`.toLowerCase().includes(q)
+      )
+      .slice(0, 6);
+  }, [cars, query]);
+
+  const nearbyCar = useMemo<Car>(() => {
+    // pick something that looks good as a hero card
+    return cars.find((c) => c.isPopular) ?? cars[0];
+  }, [cars]);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Tab One</Text>
-      <Text style={styles.subtitle}>
-        This is your temporary home screen. We can replace this with Zipo UI
-        later.
-      </Text>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <HomeHeader appName="Zipo" notificationCount={2} />
 
-      <Button title="Log out" variant="secondary" onPress={handleLogout} />
-    </View>
+        <View style={styles.pad}>
+          <SearchInput
+            value={query}
+            onChangeText={setQuery}
+            onPressFilter={() => {}}
+          />
+        </View>
+
+        {/* Brands */}
+        <View style={[styles.pad, { marginTop: 6 }]}>
+          <Text style={styles.sectionTitle}>Brands</Text>
+        </View>
+
+        <FlatList
+          data={brands.filter((b) => b.id !== "all")}
+          keyExtractor={(i) => i.id}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.brandsRow}
+          renderItem={({ item }) => (
+            <BrandCircle
+              label={item.name}
+              iconName="circle"
+              onPress={() => {
+                // later: route to search with brand filter
+              }}
+            />
+          )}
+        />
+
+        {/* Best Cars */}
+        <View style={[styles.pad, { marginTop: 18 }]}>
+          <SectionHeader
+            title="Best Cars"
+            actionText="View All"
+            onPressAction={() => {}}
+          />
+          <Text style={styles.subtle}>Available</Text>
+        </View>
+
+        <FlatList
+          data={bestCars}
+          keyExtractor={(i) => i.id}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.bestRow}
+          renderItem={({ item }) => (
+            <BestCarCard
+              car={item}
+              isFav={!!favs[item.id]}
+              onPressFav={() =>
+                setFavs((p) => ({ ...p, [item.id]: !p[item.id] }))
+              }
+              onPress={() => {
+                // later: navigate to details
+              }}
+            />
+          )}
+        />
+
+        {/* Nearby */}
+        <View style={[styles.pad, { marginTop: 18 }]}>
+          <SectionHeader
+            title="Nearby"
+            actionText="View All"
+            onPressAction={() => {}}
+          />
+        </View>
+
+        <View style={[styles.pad, { paddingTop: 10 }]}>
+          <NearbyHeroCard car={nearbyCar} onPress={() => {}} />
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "black",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
+  safe: { flex: 1, backgroundColor: COLORS.bg },
+  content: { paddingBottom: 110 },
+  pad: { paddingHorizontal: 20, paddingTop: 12 },
+
+  sectionTitle: { fontSize: 14, fontWeight: "900", color: COLORS.text },
+  subtle: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
   },
-  title: { fontSize: 24, fontWeight: "bold", color: "white", marginBottom: 12 },
-  subtitle: {
-    fontSize: 14,
-    color: "#ccc",
-    textAlign: "center",
-    marginBottom: 24,
+
+  brandsRow: {
+    paddingHorizontal: 20,
+    gap: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
+
+  bestRow: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 6 },
 });

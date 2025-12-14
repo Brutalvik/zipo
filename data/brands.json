@@ -1,0 +1,7 @@
+[
+  { "id": "all", "name": "ALL", "icon": "grid" },
+  { "id": "ferrari", "name": "Ferrari", "icon": "ferrari" },
+  { "id": "tesla", "name": "Tesla", "icon": "tesla" },
+  { "id": "bmw", "name": "BMW", "icon": "bmw" },
+  { "id": "lamborghini", "name": "Lamborghini", "icon": "lamborghini" }
+]

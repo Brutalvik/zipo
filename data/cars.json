@@ -1,0 +1,62 @@
+[
+  {
+    "id": "car_1",
+    "name": "Tesla Model S",
+    "brand": "Tesla",
+    "rating": 5.0,
+    "reviews": 128,
+    "location": "Chicago, USA",
+    "pricePerDay": 100,
+    "seats": 5,
+    "imageUrl": "https://images.unsplash.com/photo-1619767886558-efdc259cde1a?auto=format&fit=crop&w=1200&q=80",
+    "isPopular": true
+  },
+  {
+    "id": "car_2",
+    "name": "Ferrari LaFerrari",
+    "brand": "Ferrari",
+    "rating": 5.0,
+    "reviews": 74,
+    "location": "Washington DC",
+    "pricePerDay": 100,
+    "seats": 2,
+    "imageUrl": "https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80",
+    "isPopular": true
+  },
+  {
+    "id": "car_3",
+    "name": "Lamborghini Aventador",
+    "brand": "Lamborghini",
+    "rating": 4.9,
+    "reviews": 61,
+    "location": "Washington DC",
+    "pricePerDay": 100,
+    "seats": 2,
+    "imageUrl": "https://images.unsplash.com/photo-1525609004556-c46c7d6cf023?auto=format&fit=crop&w=1200&q=80",
+    "isPopular": false
+  },
+  {
+    "id": "car_4",
+    "name": "BMW GTS3 M2",
+    "brand": "BMW",
+    "rating": 5.0,
+    "reviews": 42,
+    "location": "New York, USA",
+    "pricePerDay": 100,
+    "seats": 4,
+    "imageUrl": "https://images.unsplash.com/photo-1555215695-3004980ad54e?auto=format&fit=crop&w=1200&q=80",
+    "isPopular": false
+  },
+  {
+    "id": "car_5",
+    "name": "Ferrari FF",
+    "brand": "Ferrari",
+    "rating": 5.0,
+    "reviews": 33,
+    "location": "Washington DC",
+    "pricePerDay": 200,
+    "seats": 4,
+    "imageUrl": "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=1200&q=80",
+    "isPopular": true
+  }
+]
