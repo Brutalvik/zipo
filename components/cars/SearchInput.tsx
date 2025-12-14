@@ -1,5 +1,5 @@
 import React from "react";
-import { View, TextInput, Pressable, StyleSheet } from "react-native";
+import { View, TextInput, Pressable, StyleSheet, Text } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { COLORS, RADIUS } from "@/theme/ui";
 
@@ -8,6 +8,7 @@ type Props = {
   onChangeText: (t: string) => void;
   onPressFilter?: () => void;
   placeholder?: string;
+  filterBadgeCount?: number;
 };
 
 export default function SearchInput({
@@ -15,6 +16,7 @@ export default function SearchInput({
   onChangeText,
   onPressFilter,
   placeholder = "Search your dream car....",
+  filterBadgeCount = 0,
 }: Props) {
   return (
     <View style={styles.row}>
@@ -26,17 +28,19 @@ export default function SearchInput({
           placeholder={placeholder}
           placeholderTextColor="#9CA3AF"
           style={styles.input}
-          returnKeyType="search"
         />
       </View>
 
-      <Pressable
-        onPress={onPressFilter}
-        style={styles.filterBtn}
-        accessibilityRole="button"
-        accessibilityLabel="Filters"
-      >
+      <Pressable onPress={onPressFilter} style={styles.filterBtn}>
         <Feather name="sliders" size={18} color={COLORS.text} />
+
+        {filterBadgeCount > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {filterBadgeCount > 9 ? "9+" : filterBadgeCount}
+            </Text>
+          </View>
+        )}
       </Pressable>
     </View>
   );
@@ -56,12 +60,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  input: {
-    flex: 1,
-    fontSize: 14,
-    color: COLORS.text,
-    paddingVertical: 0,
-  },
+  input: { flex: 1, fontSize: 14, color: COLORS.text },
   filterBtn: {
     width: 48,
     height: 48,
@@ -72,4 +71,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  badge: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: COLORS.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
 });

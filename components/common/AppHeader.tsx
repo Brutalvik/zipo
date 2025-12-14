@@ -1,30 +1,57 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import { useAppSelector } from "@/redux/hooks";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
 type Props = {
-  appName?: string;
+  title?: string;
   notificationCount?: number;
   onPressNotifications?: () => void;
   onPressProfile?: () => void;
 };
 
-export default function HomeHeader({
-  appName = "Zipo",
-  notificationCount = 2,
+function getInitials(name?: string | null, email?: string | null) {
+  const base = (name || "").trim() || (email || "").trim();
+  if (!base) return "U";
+  const parts = base.split(" ").filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+export default function AppHeader({
+  title = "Zipo",
+  notificationCount = 0,
   onPressNotifications,
   onPressProfile,
 }: Props) {
+  const { user } = useAppSelector((s) => s.auth);
+
+  const photoURL =
+    (user as any)?.photoURL ||
+    (user as any)?.photoUrl ||
+    (user as any)?.avatarUrl ||
+    null;
+
+  const displayName =
+    (user as any)?.displayName ||
+    (user as any)?.fullName ||
+    (user as any)?.name ||
+    null;
+
+  const email = (user as any)?.email || null;
+
+  const initials = useMemo(
+    () => getInitials(displayName, email),
+    [displayName, email]
+  );
+
   return (
     <View style={styles.row}>
-      <View style={styles.left}>
-        <View style={[styles.logo, SHADOW_CARD]}>
-          <Feather name="truck" size={16} color={COLORS.text} />
-        </View>
-        <Text style={styles.title}>{appName}</Text>
-      </View>
+      {/* LEFT: Zipo only (no icon) */}
+      <Text style={styles.title}>{title}</Text>
 
+      {/* RIGHT: bell + real user */}
       <View style={styles.right}>
         <Pressable
           style={[styles.iconBtn, SHADOW_CARD]}
@@ -48,10 +75,13 @@ export default function HomeHeader({
           accessibilityRole="button"
           accessibilityLabel="Profile"
         >
-          <Image
-            source={{ uri: "https://i.pravatar.cc/100?img=3" }}
-            style={styles.avatar}
-          />
+          {photoURL ? (
+            <Image source={{ uri: photoURL }} style={styles.avatar} />
+          ) : (
+            <View style={styles.initialsWrap}>
+              <Text style={styles.initials}>{initials}</Text>
+            </View>
+          )}
         </Pressable>
       </View>
     </View>
@@ -67,23 +97,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  left: { flexDirection: "row", alignItems: "center", gap: 10 },
-  logo: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  title: { fontSize: 20, fontWeight: "900", color: COLORS.text },
+  title: { fontSize: 22, fontWeight: "900", color: COLORS.text },
   right: { flexDirection: "row", alignItems: "center", gap: 10 },
   iconBtn: {
     width: 40,
     height: 40,
-    borderRadius: 14,
+    borderRadius: RADIUS.lg,
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -113,4 +132,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   avatar: { width: "100%", height: "100%" },
+  initialsWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  initials: { fontSize: 14, fontWeight: "900", color: COLORS.text },
 });

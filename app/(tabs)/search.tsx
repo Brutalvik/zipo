@@ -1,182 +1,113 @@
-import React, { useMemo, useState } from "react";
-import {
-  SafeAreaView,
-  ScrollView,
-  View,
-  FlatList,
-  StyleSheet,
-} from "react-native";
-import { Feather } from "@expo/vector-icons";
+import React, { useEffect, useMemo, useState } from "react";
+import { SafeAreaView, ScrollView, View, StyleSheet } from "react-native";
 
+import AppHeader from "@/components/common/AppHeader";
 import SearchInput from "@/components/cars/SearchInput";
-import BrandChip from "@/components/cars/BrandChip";
-import SectionHeader from "@/components/cars/SectionHeader";
+import FilterModal, { FilterState } from "@/components/cars/FilterModal";
 import CarGridCard from "@/components/cars/CarGridCard";
-import PopularMiniCard from "@/components/cars/PopularMiniCard";
 
-import brandsRaw from "@/data/brands.json";
 import carsRaw from "@/data/cars.json";
-import type { Brand, Car } from "@/types/cars";
+import type { Car } from "@/types/cars";
+import { loadJSON, saveJSON } from "@/lib/persist";
 import { COLORS } from "@/theme/ui";
 
+const FILTER_KEY = "zipo.search.filters";
+
+const DEFAULT_FILTERS: FilterState = {
+  minPrice: 0,
+  maxPrice: 250,
+  seats: null,
+  transmission: "Any",
+};
+
 export default function SearchTab() {
-  const brands = brandsRaw as Brand[];
   const cars = carsRaw as Car[];
 
   const [query, setQuery] = useState("");
-  const [selectedBrandId, setSelectedBrandId] = useState<string>("all");
-  const [favs, setFavs] = useState<Record<string, boolean>>({});
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersDraft, setFiltersDraft] = useState(DEFAULT_FILTERS);
+  const [filtersApplied, setFiltersApplied] = useState(DEFAULT_FILTERS);
 
-  const filtered = useMemo(() => {
-    const brandName =
-      selectedBrandId === "all"
-        ? null
-        : brands.find((b) => b.id === selectedBrandId)?.name ?? null;
-
-    const q = query.trim().toLowerCase();
-
-    return cars.filter((c) => {
-      const matchesBrand = !brandName
-        ? true
-        : c.brand.toLowerCase() === brandName.toLowerCase();
-
-      const matchesQuery = !q
-        ? true
-        : `${c.brand} ${c.name} ${c.location}`.toLowerCase().includes(q);
-
-      return matchesBrand && matchesQuery;
+  // 🔹 Load persisted filters
+  useEffect(() => {
+    loadJSON(FILTER_KEY, DEFAULT_FILTERS).then((saved) => {
+      setFiltersApplied(saved);
+      setFiltersDraft(saved);
     });
-  }, [cars, brands, query, selectedBrandId]);
+  }, []);
 
-  const popular = useMemo(() => cars.filter((c) => c.isPopular), [cars]);
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (filtersApplied.minPrice !== DEFAULT_FILTERS.minPrice) n++;
+    if (filtersApplied.maxPrice !== DEFAULT_FILTERS.maxPrice) n++;
+    if (filtersApplied.seats !== DEFAULT_FILTERS.seats) n++;
+    if (filtersApplied.transmission !== DEFAULT_FILTERS.transmission) n++;
+    return n;
+  }, [filtersApplied]);
+
+  const filteredCars = useMemo(() => {
+    const q = query.toLowerCase();
+    return cars.filter((c) => {
+      const matchQuery = !q || c.name.toLowerCase().includes(q);
+      const matchPrice =
+        c.pricePerDay >= filtersApplied.minPrice &&
+        c.pricePerDay <= filtersApplied.maxPrice;
+      const matchSeats =
+        filtersApplied.seats === null || c.seats === filtersApplied.seats;
+      return matchQuery && matchPrice && matchSeats;
+    });
+  }, [cars, query, filtersApplied]);
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
+      <AppHeader title="Zipo" notificationCount={2} />
+
+      <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.pad}>
           <SearchInput
             value={query}
             onChangeText={setQuery}
-            onPressFilter={() => {}}
-          />
-        </View>
-
-        {/* Brand Chips */}
-        <View style={{ marginTop: 14 }}>
-          <FlatList
-            data={brands}
-            keyExtractor={(i) => i.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.brandRow}
-            renderItem={({ item }) => {
-              const selected = item.id === selectedBrandId;
-
-              const left =
-                item.id === "all" ? (
-                  <Feather
-                    name="grid"
-                    size={14}
-                    color={selected ? "#fff" : COLORS.text}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.iconDot,
-                      selected ? styles.iconDotSelected : styles.iconDotDefault,
-                    ]}
-                  >
-                    <Feather
-                      name="circle"
-                      size={10}
-                      color={selected ? "#fff" : COLORS.text}
-                    />
-                  </View>
-                );
-
-              return (
-                <BrandChip
-                  label={item.name}
-                  selected={selected}
-                  left={left}
-                  onPress={() => setSelectedBrandId(item.id)}
-                />
-              );
+            filterBadgeCount={activeFilterCount}
+            onPressFilter={() => {
+              setFiltersDraft(filtersApplied);
+              setFiltersOpen(true);
             }}
           />
         </View>
 
-        {/* Recommended */}
-        <View style={[styles.pad, { marginTop: 16 }]}>
-          <SectionHeader
-            title="Recommend For You"
-            actionText="View All"
-            onPressAction={() => {}}
-          />
-          <View style={styles.grid}>
-            {filtered.slice(0, 4).map((car) => (
-              <CarGridCard
-                key={car.id}
-                car={car}
-                isFav={!!favs[car.id]}
-                onPressFav={() =>
-                  setFavs((p) => ({ ...p, [car.id]: !p[car.id] }))
-                }
-                onPressBook={() => {}}
-              />
-            ))}
-          </View>
-        </View>
-
-        {/* Popular */}
-        <View style={[styles.pad, { marginTop: 18 }]}>
-          <SectionHeader
-            title="Our Popular Cars"
-            actionText="View All"
-            onPressAction={() => {}}
-          />
-        </View>
-
-        <View style={{ marginTop: 10 }}>
-          <FlatList
-            data={popular}
-            keyExtractor={(i) => i.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.popularRow}
-            renderItem={({ item }) => (
-              <PopularMiniCard car={item} onPress={() => {}} />
-            )}
-          />
+        <View style={styles.grid}>
+          {filteredCars.map((car) => (
+            <CarGridCard key={car.id} car={car} />
+          ))}
         </View>
       </ScrollView>
+
+      <FilterModal
+        visible={filtersOpen}
+        value={filtersDraft}
+        onChange={setFiltersDraft}
+        onClose={() => setFiltersOpen(false)}
+        onReset={() => setFiltersDraft(DEFAULT_FILTERS)}
+        onApply={async () => {
+          setFiltersApplied(filtersDraft);
+          await saveJSON(FILTER_KEY, filtersDraft);
+          setFiltersOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 110 },
-  pad: { paddingHorizontal: 20, paddingTop: 16 },
-  brandRow: { paddingHorizontal: 20, gap: 10 },
+  content: { paddingBottom: 120 },
+  pad: { paddingHorizontal: 20, paddingTop: 12 },
   grid: {
-    marginTop: 12,
+    paddingHorizontal: 20,
+    marginTop: 16,
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
     rowGap: 14,
   },
-  popularRow: { paddingHorizontal: 20 },
-  iconDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  iconDotDefault: { backgroundColor: "rgba(0,0,0,0.05)" },
-  iconDotSelected: { backgroundColor: "rgba(255,255,255,0.15)" },
 });

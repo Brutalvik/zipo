@@ -11,7 +11,7 @@ import {
 import SearchInput from "@/components/cars/SearchInput";
 import SectionHeader from "@/components/cars/SectionHeader";
 
-import HomeHeader from "@/components/home/HomeHeader";
+import AppHeader from "@/components/common/AppHeader";
 import BrandCircle from "@/components/home/BrandCircle";
 import BestCarCard from "@/components/home/BestCarCard";
 import NearbyHeroCard from "@/components/home/NearbyHeroCard";
@@ -58,7 +58,7 @@ export default function HomeTab() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <HomeHeader appName="Zipo" notificationCount={2} />
+        <AppHeader title="Zipo" notificationCount={2} />
 
         <View style={styles.pad}>
           <SearchInput
