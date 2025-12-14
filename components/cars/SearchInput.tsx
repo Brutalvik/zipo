@@ -28,19 +28,25 @@ export default function SearchInput({
           placeholder={placeholder}
           placeholderTextColor="#9CA3AF"
           style={styles.input}
+          returnKeyType="search"
         />
       </View>
 
-      <Pressable onPress={onPressFilter} style={styles.filterBtn}>
+      <Pressable
+        onPress={onPressFilter}
+        style={styles.filterBtn}
+        accessibilityRole="button"
+        accessibilityLabel="Filters"
+      >
         <Feather name="sliders" size={18} color={COLORS.text} />
 
-        {filterBadgeCount > 0 && (
+        {filterBadgeCount > 0 ? (
           <View style={styles.badge}>
             <Text style={styles.badgeText}>
               {filterBadgeCount > 9 ? "9+" : filterBadgeCount}
             </Text>
           </View>
-        )}
+        ) : null}
       </Pressable>
     </View>
   );
@@ -60,7 +66,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  input: { flex: 1, fontSize: 14, color: COLORS.text },
+  input: { flex: 1, fontSize: 14, color: COLORS.text, paddingVertical: 0 },
   filterBtn: {
     width: 48,
     height: 48,
@@ -78,9 +84,12 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     borderRadius: 9,
+    paddingHorizontal: 5,
     backgroundColor: COLORS.black,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.6)",
   },
   badgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
 });

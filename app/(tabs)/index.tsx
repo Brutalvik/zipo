@@ -8,49 +8,70 @@ import {
   Text,
 } from "react-native";
 
-import SearchInput from "@/components/cars/SearchInput";
-import SectionHeader from "@/components/cars/SectionHeader";
-
 import AppHeader from "@/components/common/AppHeader";
-import BrandCircle from "@/components/home/BrandCircle";
+import SectionHeader from "@/components/cars/SectionHeader";
 import BestCarCard from "@/components/home/BestCarCard";
 import NearbyHeroCard from "@/components/home/NearbyHeroCard";
+import TypePill from "@/components/home/TypePill";
+import HomeSearchPanel, {
+  HomeSearchState,
+} from "@/components/home/HomeSearchPanel";
 
-import brandsRaw from "@/data/brands.json";
+import vehicleTypesRaw from "@/data/vehicleTypes.json";
 import carsRaw from "@/data/cars.json";
-import type { Brand, Car } from "@/types/cars";
+import type { Car } from "@/types/cars";
 import { COLORS } from "@/theme/ui";
 
-export default function HomeTab() {
-  const brands = brandsRaw as Brand[];
-  const cars = carsRaw as Car[];
+type VehicleTypeItem = { id: string; label: string };
 
-  const [query, setQuery] = useState("");
+export default function HomeTab() {
+  const cars = carsRaw as Car[];
+  const types = vehicleTypesRaw as VehicleTypeItem[];
+
   const [favs, setFavs] = useState<Record<string, boolean>>({});
+  const [selectedType, setSelectedType] = useState<string>("all");
+
+  // ✅ Home search criteria state (simple for now)
+  const [criteria, setCriteria] = useState<HomeSearchState>({
+    location: "",
+    pickupAt: new Date(),
+    days: 3,
+  });
+
+  // ✅ simple local filter for home (type + optional location keyword)
+  const homeFilteredCars = useMemo(() => {
+    const q = criteria.location.trim().toLowerCase();
+
+    return cars.filter((c) => {
+      const matchesLocation = !q ? true : c.location.toLowerCase().includes(q);
+
+      const matchesType =
+        selectedType === "all"
+          ? true
+          : c.vehicleType
+          ? c.vehicleType === selectedType
+          : true;
+
+      return matchesLocation && matchesType;
+    });
+  }, [cars, criteria.location, selectedType]);
 
   const bestCars = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const base = cars
+    return homeFilteredCars
       .slice()
       .sort(
         (a, b) =>
           b.rating +
           (b.isPopular ? 0.2 : 0) -
           (a.rating + (a.isPopular ? 0.2 : 0))
-      );
-
-    if (!q) return base.slice(0, 6);
-    return base
-      .filter((c) =>
-        `${c.brand} ${c.name} ${c.location}`.toLowerCase().includes(q)
       )
       .slice(0, 6);
-  }, [cars, query]);
+  }, [homeFilteredCars]);
 
   const nearbyCar = useMemo<Car>(() => {
-    // pick something that looks good as a hero card
-    return cars.find((c) => c.isPopular) ?? cars[0];
-  }, [cars]);
+    const pool = homeFilteredCars.length > 0 ? homeFilteredCars : cars;
+    return pool.find((c) => c.isPopular) ?? pool[0];
+  }, [homeFilteredCars, cars]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -60,32 +81,27 @@ export default function HomeTab() {
       >
         <AppHeader title="Zipo" notificationCount={2} />
 
-        <View style={styles.pad}>
-          <SearchInput
-            value={query}
-            onChangeText={setQuery}
-            onPressFilter={() => {}}
-          />
-        </View>
+        {/* ✅ Location + Pickup date/time + Days (max 30) */}
+        <HomeSearchPanel value={criteria} onChange={setCriteria} />
 
-        {/* Brands */}
-        <View style={[styles.pad, { marginTop: 6 }]}>
-          <Text style={styles.sectionTitle}>Brands</Text>
+        {/* Vehicle Types */}
+        <View style={[styles.pad, { marginTop: 14 }]}>
+          <Text style={styles.sectionTitle}>Vehicle types</Text>
         </View>
 
         <FlatList
-          data={brands.filter((b) => b.id !== "all")}
+          data={[{ id: "all", label: "All" } as VehicleTypeItem, ...types]}
           keyExtractor={(i) => i.id}
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.brandsRow}
+          contentContainerStyle={styles.typeRow}
           renderItem={({ item }) => (
-            <BrandCircle
-              label={item.name}
-              iconName="circle"
-              onPress={() => {
-                // later: route to search with brand filter
-              }}
+            <TypePill
+              label={item.label}
+              selected={selectedType === item.id}
+              onPress={() =>
+                setSelectedType((prev) => (prev === item.id ? "all" : item.id))
+              }
             />
           )}
         />
@@ -97,7 +113,9 @@ export default function HomeTab() {
             actionText="View All"
             onPressAction={() => {}}
           />
-          <Text style={styles.subtle}>Available</Text>
+          <Text style={styles.subtle}>
+            {selectedType === "all" ? "Available" : `Filtered: ${selectedType}`}
+          </Text>
         </View>
 
         <FlatList
@@ -113,11 +131,16 @@ export default function HomeTab() {
               onPressFav={() =>
                 setFavs((p) => ({ ...p, [item.id]: !p[item.id] }))
               }
-              onPress={() => {
-                // later: navigate to details
-              }}
+              onPress={() => {}}
             />
           )}
+          ListEmptyComponent={
+            <View style={{ paddingHorizontal: 20, paddingVertical: 12 }}>
+              <Text style={{ color: COLORS.muted, fontWeight: "700" }}>
+                No cars match your current filters.
+              </Text>
+            </View>
+          }
         />
 
         {/* Nearby */}
@@ -150,12 +173,6 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
   },
 
-  brandsRow: {
-    paddingHorizontal: 20,
-    gap: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
-  },
-
+  typeRow: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8 },
   bestRow: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 6 },
 });

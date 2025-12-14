@@ -1,5 +1,15 @@
 export type Transmission = "Automatic" | "Manual";
 
+export type VehicleType =
+  | "Hatchback"
+  | "Sedan"
+  | "SUV"
+  | "MUV"
+  | "Coupe"
+  | "Convertible"
+  | "Pickup"
+  | "Van";
+
 export type Car = {
   id: string;
   name: string;
@@ -12,7 +22,10 @@ export type Car = {
   imageUrl: string;
   isPopular?: boolean;
 
-  // NEW (optional so your existing JSON still works)
+  // Optional (if missing, we won't filter by it)
+  vehicleType?: VehicleType;
+
+  // Optional (if missing, treated as Automatic)
   transmission?: Transmission;
 };
 
@@ -20,4 +33,9 @@ export type Brand = {
   id: string;
   name: string;
   icon?: string;
+};
+
+export type VehicleTypeItem = {
+  id: VehicleType;
+  label: string;
 };

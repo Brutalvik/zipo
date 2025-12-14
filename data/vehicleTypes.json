@@ -1,0 +1,10 @@
+[
+  { "id": "Hatchback", "label": "Hatchback" },
+  { "id": "Sedan", "label": "Sedan" },
+  { "id": "SUV", "label": "SUV" },
+  { "id": "MUV", "label": "MUV" },
+  { "id": "Coupe", "label": "Coupe" },
+  { "id": "Convertible", "label": "Convertible" },
+  { "id": "Pickup", "label": "Pickup" },
+  { "id": "Van", "label": "Van" }
+]
