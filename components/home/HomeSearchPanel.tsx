@@ -21,7 +21,6 @@ export type HomeSearchState = {
   days: number; // 1..30
 };
 
-// Helpers to merge date + time into one Date
 function mergeDateAndTime(datePart: Date, timePart: Date) {
   const merged = new Date(datePart);
   merged.setHours(timePart.getHours());
@@ -34,15 +33,17 @@ function mergeDateAndTime(datePart: Date, timePart: Date) {
 export default function HomeSearchPanel({
   value,
   onChange,
+  resultCount,
+  onPressSearch,
 }: {
   value: HomeSearchState;
   onChange: (next: HomeSearchState) => void;
+  resultCount: number;
+  onPressSearch: () => void;
 }) {
   const [daysOpen, setDaysOpen] = useState(false);
-
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  // iOS temp state (separate date + time for reliability)
   const [tempDate, setTempDate] = useState<Date>(value.pickupAt);
   const [tempTime, setTempTime] = useState<Date>(value.pickupAt);
 
@@ -52,7 +53,6 @@ export default function HomeSearchPanel({
   );
 
   const openPicker = () => {
-    // seed temp pickers
     setTempDate(value.pickupAt);
     setTempTime(value.pickupAt);
     setPickerOpen(true);
@@ -66,7 +66,6 @@ export default function HomeSearchPanel({
     setPickerOpen(false);
   };
 
-  // Android: use native datetime dialog (works fine)
   const onAndroidChange = (e: DateTimePickerEvent, selected?: Date) => {
     if (e.type === "dismissed") {
       setPickerOpen(false);
@@ -76,11 +75,13 @@ export default function HomeSearchPanel({
     setPickerOpen(false);
   };
 
+  const city = value.location.trim() || "your area";
+  const prettyCount = resultCount === 1 ? "1 car" : `${resultCount} cars`;
+
   return (
     <View style={[styles.card, SHADOW_CARD]}>
       <Text style={styles.title}>Find your car</Text>
 
-      {/* Location */}
       <Text style={styles.label}>Location</Text>
       <View style={styles.inputWrap}>
         <TextInput
@@ -93,49 +94,49 @@ export default function HomeSearchPanel({
         />
       </View>
 
-      {/* Pickup */}
       <Text style={[styles.label, { marginTop: 12 }]}>Pickup date & time</Text>
-      <Pressable
-        onPress={openPicker}
-        style={styles.selectRow}
-        accessibilityRole="button"
-      >
+      <Pressable onPress={openPicker} style={styles.selectRow}>
         <Text style={styles.selectText}>{formatDateTime(value.pickupAt)}</Text>
         <Text style={styles.selectHint}>Change</Text>
       </Pressable>
 
-      {/* Trip length */}
       <Text style={[styles.label, { marginTop: 12 }]}>Trip length</Text>
-      <Pressable
-        onPress={() => setDaysOpen(true)}
-        style={styles.selectRow}
-        accessibilityRole="button"
-      >
+      <Pressable onPress={() => setDaysOpen(true)} style={styles.selectRow}>
         <Text style={styles.selectText}>
           {value.days} {value.days === 1 ? "day" : "days"}
         </Text>
         <Text style={styles.selectHint}>Select</Text>
       </Pressable>
 
-      {/* Dropoff */}
       <View style={styles.preview}>
         <Text style={styles.previewLabel}>Dropoff</Text>
         <Text style={styles.previewValue}>{formatDateTime(dropoffAt)}</Text>
       </View>
 
-      {/* ANDROID native picker */}
+      {/* ✅ LIVE RESULT COUNT (high contrast) */}
+      <View style={styles.countRow}>
+        <View style={styles.countBadge}>
+          <Text style={styles.countBadgeText}>{prettyCount}</Text>
+        </View>
+        <Text style={styles.countText}>available in {city}</Text>
+      </View>
+
+      <Pressable onPress={onPressSearch} style={styles.cta}>
+        <Text style={styles.ctaText}>Search Cars</Text>
+      </Pressable>
+
+      {/* Android native picker */}
       {Platform.OS === "android" && pickerOpen ? (
         <DateTimePicker
           value={value.pickupAt}
           mode="datetime"
           display="default"
-          themeVariant="light" // ✅ FORCE dark text
           onChange={onAndroidChange}
           minimumDate={new Date()}
         />
       ) : null}
 
-      {/* iOS modal sheet picker (DATE + TIME separately) */}
+      {/* iOS pageSheet */}
       {Platform.OS === "ios" ? (
         <Modal
           visible={pickerOpen}
@@ -161,27 +162,25 @@ export default function HomeSearchPanel({
               </Pressable>
             </View>
 
-            {/* Calendar */}
             <Text style={styles.iosSection}>Date</Text>
             <View style={styles.iosPickerBlock}>
               <DateTimePicker
                 value={tempDate}
                 mode="date"
                 display="inline"
-                themeVariant="light" // ✅ FORCE dark text
+                themeVariant="light"
                 onChange={(_e, d) => d && setTempDate(d)}
                 minimumDate={new Date()}
               />
             </View>
 
-            {/* Time */}
             <Text style={styles.iosSection}>Time</Text>
             <View style={styles.iosTimeBlock}>
               <DateTimePicker
                 value={tempTime}
                 mode="time"
                 display="spinner"
-                themeVariant="light" // ✅ FORCE dark text
+                themeVariant="light"
                 onChange={(_e, d) => d && setTempTime(d)}
               />
             </View>
@@ -261,7 +260,31 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
-  // iOS pageSheet
+  countRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  countBadge: {
+    backgroundColor: COLORS.black,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  countBadgeText: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  countText: { color: COLORS.text, fontSize: 12, fontWeight: "800" },
+
+  cta: {
+    marginTop: 12,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.black,
+  },
+  ctaText: { color: "#fff", fontSize: 13, fontWeight: "900" },
+
   iosSheetRoot: {
     flex: 1,
     backgroundColor: COLORS.white,
@@ -292,7 +315,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: COLORS.muted,
   },
-
   iosPickerBlock: {
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -306,10 +328,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "#FBFBFD",
-    height: 180, // ensures spinner has space
+    height: 180,
     justifyContent: "center",
-  },
-  iosPicker: {
-    alignSelf: "stretch",
   },
 });

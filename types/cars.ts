@@ -1,3 +1,5 @@
+import { Address } from "./address";
+
 export type Transmission = "Automatic" | "Manual";
 
 export type VehicleType =
@@ -27,6 +29,7 @@ export type Car = {
 
   // Optional (if missing, treated as Automatic)
   transmission?: Transmission;
+  pickupAddress?: Address;
 };
 
 export type Brand = {

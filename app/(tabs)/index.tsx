@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   SafeAreaView,
   ScrollView,
@@ -7,6 +7,7 @@ import {
   FlatList,
   Text,
 } from "react-native";
+import { useRouter } from "expo-router";
 
 import AppHeader from "@/components/common/AppHeader";
 import SectionHeader from "@/components/cars/SectionHeader";
@@ -22,39 +23,97 @@ import carsRaw from "@/data/cars.json";
 import type { Car } from "@/types/cars";
 import { COLORS } from "@/theme/ui";
 
+import { loadJSON, saveJSON } from "@/lib/persist";
+
 type VehicleTypeItem = { id: string; label: string };
 
+const HOME_PREFS_KEY = "zipo.home.prefs.v1";
+
+type HomePrefs = {
+  criteria: { location: string; pickupAtISO: string; days: number };
+  selectedType: string; // "all" or type id
+};
+
+const DEFAULT_PREFS: HomePrefs = {
+  criteria: { location: "", pickupAtISO: new Date().toISOString(), days: 3 },
+  selectedType: "all",
+};
+
 export default function HomeTab() {
+  const router = useRouter();
   const cars = carsRaw as Car[];
   const types = vehicleTypesRaw as VehicleTypeItem[];
 
   const [favs, setFavs] = useState<Record<string, boolean>>({});
   const [selectedType, setSelectedType] = useState<string>("all");
 
-  // ✅ Home search criteria state (simple for now)
   const [criteria, setCriteria] = useState<HomeSearchState>({
     location: "",
     pickupAt: new Date(),
     days: 3,
   });
 
-  // ✅ simple local filter for home (type + optional location keyword)
-  const homeFilteredCars = useMemo(() => {
-    const q = criteria.location.trim().toLowerCase();
+  // Load persisted home state once
+  useEffect(() => {
+    (async () => {
+      const saved = await loadJSON<HomePrefs>(HOME_PREFS_KEY, DEFAULT_PREFS);
+      setSelectedType(saved.selectedType ?? "all");
+      setCriteria({
+        location: saved.criteria?.location ?? "",
+        pickupAt: saved.criteria?.pickupAtISO
+          ? new Date(saved.criteria.pickupAtISO)
+          : new Date(),
+        days: Math.min(30, Math.max(1, saved.criteria?.days ?? 3)),
+      });
+    })();
+  }, []);
 
+  // Persist home state (debounced)
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const next: HomePrefs = {
+        selectedType,
+        criteria: {
+          location: criteria.location,
+          pickupAtISO: criteria.pickupAt.toISOString(),
+          days: criteria.days,
+        },
+      };
+      saveJSON(HOME_PREFS_KEY, next);
+    }, 250);
+
+    return () => clearTimeout(id);
+  }, [criteria.location, criteria.pickupAt, criteria.days, selectedType]);
+
+  // ✅ First apply ONLY type filter (never "0 everything" unless truly none)
+  const typeFilteredCars = useMemo(() => {
     return cars.filter((c) => {
-      const matchesLocation = !q ? true : c.location.toLowerCase().includes(q);
-
-      const matchesType =
-        selectedType === "all"
-          ? true
-          : c.vehicleType
-          ? c.vehicleType === selectedType
-          : true;
-
-      return matchesLocation && matchesType;
+      if (selectedType === "all") return true;
+      return c.vehicleType ? c.vehicleType === selectedType : true;
     });
-  }, [cars, criteria.location, selectedType]);
+  }, [cars, selectedType]);
+
+  // ✅ Then apply location filter, but allow fallback to typeFilteredCars if no matches
+  const locationQuery = criteria.location.trim().toLowerCase();
+
+  const exactLocationMatches = useMemo(() => {
+    if (!locationQuery) return typeFilteredCars;
+
+    return typeFilteredCars.filter((c) => {
+      const loc = (c.location || "").toLowerCase();
+      return loc.includes(locationQuery);
+    });
+  }, [typeFilteredCars, locationQuery]);
+
+  const usingLocationFallback =
+    locationQuery.length > 0 && exactLocationMatches.length === 0;
+
+  const homeFilteredCars = usingLocationFallback
+    ? typeFilteredCars
+    : exactLocationMatches;
+
+  // ✅ Live count should represent what we’re showing
+  const resultCount = homeFilteredCars.length;
 
   const bestCars = useMemo(() => {
     return homeFilteredCars
@@ -73,6 +132,18 @@ export default function HomeTab() {
     return pool.find((c) => c.isPopular) ?? pool[0];
   }, [homeFilteredCars, cars]);
 
+  const onPressSearch = () => {
+    router.push({
+      pathname: "/(tabs)/search",
+      params: {
+        location: criteria.location,
+        pickupAt: criteria.pickupAt.toISOString(),
+        days: String(criteria.days),
+        type: selectedType,
+      },
+    });
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView
@@ -81,8 +152,22 @@ export default function HomeTab() {
       >
         <AppHeader title="Zipo" notificationCount={2} />
 
-        {/* ✅ Location + Pickup date/time + Days (max 30) */}
-        <HomeSearchPanel value={criteria} onChange={setCriteria} />
+        <HomeSearchPanel
+          value={criteria}
+          onChange={setCriteria}
+          resultCount={resultCount}
+          onPressSearch={onPressSearch}
+        />
+
+        {/* ✅ small hint if we’re falling back */}
+        {usingLocationFallback ? (
+          <View style={[styles.pad, { paddingTop: 8 }]}>
+            <Text style={styles.fallbackText}>
+              No exact matches for “{criteria.location}” — showing all available
+              cars.
+            </Text>
+          </View>
+        ) : null}
 
         {/* Vehicle Types */}
         <View style={[styles.pad, { marginTop: 14 }]}>
@@ -111,7 +196,7 @@ export default function HomeTab() {
           <SectionHeader
             title="Best Cars"
             actionText="View All"
-            onPressAction={() => {}}
+            onPressAction={() => router.push("/(tabs)/search")}
           />
           <Text style={styles.subtle}>
             {selectedType === "all" ? "Available" : `Filtered: ${selectedType}`}
@@ -148,7 +233,7 @@ export default function HomeTab() {
           <SectionHeader
             title="Nearby"
             actionText="View All"
-            onPressAction={() => {}}
+            onPressAction={() => router.push("/(tabs)/search")}
           />
         </View>
 
@@ -175,4 +260,6 @@ const styles = StyleSheet.create({
 
   typeRow: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8 },
   bestRow: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 6 },
+
+  fallbackText: { fontSize: 12, fontWeight: "700", color: COLORS.muted },
 });

@@ -7,7 +7,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 
 import AppHeader from "@/components/common/AppHeader";
 import SearchInput from "@/components/cars/SearchInput";
@@ -23,12 +23,7 @@ import { loadJSON, saveJSON } from "@/lib/persist";
 
 import carsRaw from "@/data/cars.json";
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
-import type {
-  Car,
-  VehicleType,
-  VehicleTypeItem,
-  Transmission,
-} from "@/types/cars";
+import type { Car, VehicleTypeItem, Transmission } from "@/types/cars";
 import { COLORS } from "@/theme/ui";
 
 const PREFS_KEY = "zipo.search.prefs.v1";
@@ -42,8 +37,13 @@ const DEFAULT_FILTERS: FilterState = {
 
 type SearchPrefs = {
   query: string;
-  selectedType: VehicleType | "all";
+  selectedType: string; // "all" or type id
   filters: FilterState;
+
+  // (optional) saved criteria from Home for later backend
+  location?: string;
+  pickupAtISO?: string;
+  days?: number;
 };
 
 const DEFAULT_PREFS: SearchPrefs = {
@@ -57,14 +57,18 @@ function normalizeTransmission(t?: Transmission): Transmission {
 }
 
 export default function SearchTab() {
-  const router = useRouter();
-  const params = useLocalSearchParams<{ type?: string }>();
+  const params = useLocalSearchParams<{
+    location?: string;
+    pickupAt?: string;
+    days?: string;
+    type?: string;
+  }>();
 
   const cars = carsRaw as Car[];
   const types = vehicleTypesRaw as VehicleTypeItem[];
 
   const [query, setQuery] = useState("");
-  const [selectedType, setSelectedType] = useState<VehicleType | "all">("all");
+  const [selectedType, setSelectedType] = useState<string>("all");
 
   const [favs, setFavs] = useState<Record<string, boolean>>({});
 
@@ -85,29 +89,56 @@ export default function SearchTab() {
     })();
   }, []);
 
-  // 2) Sync Home → Search navigation param (type) when provided
+  // 2) If navigated from Home with params, apply them once they exist
   useEffect(() => {
-    if (!params?.type) return;
+    const incomingLocation = (params?.location ?? "").toString();
+    const incomingType = (params?.type ?? "").toString();
+    const incomingPickupAt = (params?.pickupAt ?? "").toString();
+    const incomingDays = params?.days ? Number(params.days) : undefined;
 
-    const t = String(params.type) as VehicleType;
-    const valid = types.some((x) => x.id === t);
-    if (!valid) return;
+    const hasAny =
+      !!incomingLocation ||
+      !!incomingType ||
+      !!incomingPickupAt ||
+      typeof incomingDays === "number";
 
-    // When coming from Home, override selectedType and persist immediately
-    setSelectedType(t);
+    if (!hasAny) return;
 
+    // Apply: location -> query (simple now), type -> selectedType
+    if (incomingLocation) setQuery(incomingLocation);
+
+    if (incomingType && incomingType !== "all") {
+      const valid = types.some((t) => t.id === incomingType);
+      if (valid) setSelectedType(incomingType);
+    } else if (incomingType === "all") {
+      setSelectedType("all");
+    }
+
+    // Persist the incoming criteria for later backend usage
     (async () => {
       const current = await loadJSON<SearchPrefs>(PREFS_KEY, DEFAULT_PREFS);
-      const next: SearchPrefs = { ...current, selectedType: t };
+      const next: SearchPrefs = {
+        ...current,
+        query: incomingLocation ? incomingLocation : current.query,
+        selectedType:
+          incomingType && types.some((t) => t.id === incomingType)
+            ? incomingType
+            : incomingType === "all"
+            ? "all"
+            : current.selectedType,
+        location: incomingLocation || current.location,
+        pickupAtISO: incomingPickupAt || current.pickupAtISO,
+        days:
+          typeof incomingDays === "number" && !Number.isNaN(incomingDays)
+            ? incomingDays
+            : current.days,
+      };
       await saveJSON(PREFS_KEY, next);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.location, params?.type, params?.pickupAt, params?.days, types]);
 
-    // Optional: clear param so it doesn't keep reapplying on re-render
-    // (not strictly required; expo-router params may persist)
-    // router.setParams?.({ type: undefined } as any);
-  }, [params?.type, types]);
-
-  // 3) Persist query + selectedType + filtersApplied (debounced-ish)
+  // 3) Persist query + selectedType + filtersApplied (debounced)
   useEffect(() => {
     const id = setTimeout(() => {
       const next: SearchPrefs = {
@@ -127,7 +158,7 @@ export default function SearchTab() {
     if (filtersApplied.maxPrice !== DEFAULT_FILTERS.maxPrice) n++;
     if (filtersApplied.seats !== DEFAULT_FILTERS.seats) n++;
     if (filtersApplied.transmission !== DEFAULT_FILTERS.transmission) n++;
-    if (selectedType !== "all") n++; // count type as a filter badge too
+    if (selectedType !== "all") n++;
     return n;
   }, [filtersApplied, selectedType]);
 
@@ -144,7 +175,7 @@ export default function SearchTab() {
           ? true
           : c.vehicleType
           ? c.vehicleType === selectedType
-          : true; // if car doesn't have vehicleType, don't block it
+          : true;
 
       const matchesPrice =
         c.pricePerDay >= filtersApplied.minPrice &&
@@ -191,7 +222,7 @@ export default function SearchTab() {
           />
         </View>
 
-        {/* Vehicle Type chips */}
+        {/* Vehicle type chips */}
         <View style={{ marginTop: 14 }}>
           <FlatList
             data={[{ id: "all", label: "All" } as any, ...types]}
@@ -200,7 +231,7 @@ export default function SearchTab() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.typeRow}
             renderItem={({ item }: any) => {
-              const id = item.id as VehicleType | "all";
+              const id = item.id as string;
               const selected = id === selectedType;
 
               const left =
