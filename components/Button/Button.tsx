@@ -292,7 +292,6 @@ const styles = StyleSheet.create({
     backgroundColor: ZIPO_COLORS.glassBG,
     borderWidth: 1,
     borderColor: ZIPO_COLORS.glassBorder,
-    backdropFilter: "blur(8px)",
     alignItems: "center",
     justifyContent: "center",
   },

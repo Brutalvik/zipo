@@ -72,7 +72,7 @@ export function ZipoBottomBar({
     if (!layout) return;
 
     /**
-     * ✅ Wider bubble:
+     * Wider bubble:
      * smaller inset => bubble covers more of the tab button width
      */
     const inset = -4;

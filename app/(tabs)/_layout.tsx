@@ -1,6 +1,6 @@
 import React from "react";
 import { Tabs } from "expo-router";
-import { ZipoBottomBar } from "@/components/Navigation/ZippoBottomBar";
+import { ZipoBottomBar } from "@/components/navigation/ZippoBottomBar";
 
 export default function TabsLayout() {
   return (

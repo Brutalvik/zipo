@@ -1,6 +1,14 @@
 import React, { useMemo } from "react";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  Platform,
+} from "react-native";
 import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useAppSelector } from "@/redux/hooks";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
@@ -8,7 +16,7 @@ type Props = {
   title?: string;
   notificationCount?: number;
   onPressNotifications?: () => void;
-  onPressProfile?: () => void;
+  onPressProfile?: () => void; // optional override
 };
 
 function getInitials(name?: string | null, email?: string | null) {
@@ -25,6 +33,7 @@ export default function AppHeader({
   onPressNotifications,
   onPressProfile,
 }: Props) {
+  const router = useRouter();
   const { user } = useAppSelector((s) => s.auth);
 
   const photoURL =
@@ -46,18 +55,39 @@ export default function AppHeader({
     [displayName, email]
   );
 
+  const handleProfilePress = () => {
+    if (onPressProfile) return onPressProfile();
+    // Default: navigate to profile tab screen
+    router.push("/(tabs)/profile");
+  };
+
+  const handleNotificationsPress = () => {
+    if (onPressNotifications) return onPressNotifications();
+    // Optional default route if you have it:
+    // router.push("/(tabs)/notifications");
+  };
+
   return (
     <View style={styles.row}>
-      {/* LEFT: Zipo only (no icon) */}
-      <Text style={styles.title}>{title}</Text>
+      {/* LEFT */}
+      <View style={styles.left}>
+        <Text style={styles.title}>{title}</Text>
+        {/* Optional: small subtitle/region later */}
+        {/* <Text style={styles.subtitle}>Find your next ride</Text> */}
+      </View>
 
-      {/* RIGHT: bell + real user */}
+      {/* RIGHT */}
       <View style={styles.right}>
         <Pressable
-          style={[styles.iconBtn, SHADOW_CARD]}
-          onPress={onPressNotifications}
+          style={({ pressed }) => [
+            styles.iconBtn,
+            SHADOW_CARD,
+            pressed && styles.pressed,
+          ]}
+          onPress={handleNotificationsPress}
           accessibilityRole="button"
           accessibilityLabel="Notifications"
+          android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
         >
           <Feather name="bell" size={18} color={COLORS.text} />
           {notificationCount > 0 ? (
@@ -70,11 +100,19 @@ export default function AppHeader({
         </Pressable>
 
         <Pressable
-          onPress={onPressProfile}
-          style={[styles.avatarWrap, SHADOW_CARD]}
+          onPress={handleProfilePress}
+          style={({ pressed }) => [
+            styles.avatarWrap,
+            SHADOW_CARD,
+            pressed && styles.pressed,
+          ]}
           accessibilityRole="button"
           accessibilityLabel="Profile"
+          android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
         >
+          {/* subtle glass overlay */}
+          <View pointerEvents="none" style={styles.glassOverlay} />
+
           {photoURL ? (
             <Image source={{ uri: photoURL }} style={styles.avatar} />
           ) : (
@@ -91,28 +129,52 @@ export default function AppHeader({
 const styles = StyleSheet.create({
   row: {
     paddingHorizontal: 20,
-    paddingTop: 10,
+    paddingTop: Platform.OS === "ios" ? 10 : 12,
     paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  title: { fontSize: 22, fontWeight: "900", color: COLORS.text },
-  right: { flexDirection: "row", alignItems: "center", gap: 10 },
+
+  left: {
+    flexDirection: "column",
+    gap: 2,
+  },
+
+  title: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: COLORS.text,
+    letterSpacing: -0.3,
+  },
+
+  // subtitle: {
+  //   fontSize: 12,
+  //   fontWeight: "700",
+  //   color: "rgba(0,0,0,0.45)",
+  // },
+
+  right: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.white,
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.92)",
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: "rgba(0,0,0,0.08)",
     alignItems: "center",
     justifyContent: "center",
   },
+
   badge: {
     position: "absolute",
-    top: -5,
-    right: -5,
+    top: -6,
+    right: -6,
     minWidth: 18,
     height: 18,
     borderRadius: 9,
@@ -120,18 +182,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.95)",
   },
-  badgeText: { color: "#fff", fontSize: 10, fontWeight: "800" },
+
+  badgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "900",
+  },
+
   avatarWrap: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
     borderRadius: 16,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
+    borderColor: "rgba(0,0,0,0.08)",
+    backgroundColor: "rgba(255,255,255,0.92)",
   },
+
+  glassOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+
   avatar: { width: "100%", height: "100%" },
-  initialsWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
-  initials: { fontSize: 14, fontWeight: "900", color: COLORS.text },
+
+  initialsWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  initials: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: COLORS.text,
+  },
+
+  pressed: {
+    opacity: 0.86,
+    transform: [{ scale: 0.98 }],
+  },
 });
