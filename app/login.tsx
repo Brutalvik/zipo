@@ -7,17 +7,18 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
+  Platform,
 } from "react-native";
 import { Link, Stack, useRouter } from "expo-router";
 import { FontAwesome } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { signInWithEmailAndPassword } from "firebase/auth";
+
 import Button from "@/components/Button/Button";
 import { auth } from "@/services/firebase";
 import { useAppDispatch } from "@/redux/hooks";
 import { signIn } from "@/redux/slices/authSlice";
 
-// --- Constants ---
 const ZIPO_COLORS = {
   primary: "#1E1E1E",
   secondary: "#FFFFFF",
@@ -26,6 +27,11 @@ const ZIPO_COLORS = {
   border: "#D0D0D0",
   black: "#000000",
 };
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
+
+if (!API_BASE) {
+  throw new Error("EXPO_PUBLIC_API_BASE is not set");
+}
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -59,13 +65,34 @@ export default function LoginScreen() {
         return;
       }
 
-      // 👇 Build the full user object for Redux
+      // ✅ Login is successful at this point
+      const idToken = await user.getIdToken(true);
+
+      let dbUser: any = null;
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/session`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || "Failed to sync session");
+
+        dbUser = JSON.parse(text).user;
+      } catch (e: any) {
+        console.warn("DB sync failed (will retry later):", e?.message || e);
+        // Optional: show a softer message
+        // Alert.alert("Signed in", "Signed in successfully, syncing profile...");
+      }
+
       const userObject = {
         id: user.uid,
-        name: user.displayName || email,
-        email: user.email ?? email,
-        photoURL: user.photoURL,
-        phoneNumber: user.phoneNumber,
+        name: user.displayName || dbUser?.full_name || email,
+        email: user.email ?? dbUser?.email ?? email,
+        photoURL: dbUser?.profile_photo_url ?? user.photoURL ?? null,
+        phoneNumber: dbUser?.phone_e164 ?? user.phoneNumber ?? null,
         emailVerified: user.emailVerified,
         providerId: user.providerId ?? null,
       };
@@ -73,15 +100,11 @@ export default function LoginScreen() {
       dispatch(signIn(userObject));
       router.replace("/(tabs)");
     } catch (error: any) {
-      let errorMessage = "Login failed. Please check your credentials.";
-      if (
-        error.code === "auth/invalid-credential" ||
-        error.code === "auth/user-not-found" ||
-        error.code === "auth/wrong-password"
-      ) {
-        errorMessage = "Invalid email or password.";
-      }
-      Alert.alert("Login Failed", errorMessage);
+      console.warn("Login error:", error);
+      Alert.alert(
+        "Login Failed",
+        error?.message || "Login failed. Please check your credentials."
+      );
     } finally {
       setIsLoading(false);
     }
@@ -95,7 +118,6 @@ export default function LoginScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <SafeAreaView style={styles.container}>
-        {/* Header */}
         <View style={styles.headerArea}>
           <View style={styles.logoContainer}>
             <FontAwesome name="car" size={24} color={ZIPO_COLORS.secondary} />
@@ -103,12 +125,10 @@ export default function LoginScreen() {
           <Text style={styles.logoText}>Zipo</Text>
         </View>
 
-        {/* Welcome text */}
         <Text style={styles.welcomeTitle}>
           Welcome Back{"\n"}Ready to hit the road.
         </Text>
 
-        {/* Inputs */}
         <View style={styles.inputGroup}>
           <TextInput
             style={styles.input}
@@ -143,7 +163,6 @@ export default function LoginScreen() {
           </View>
         </View>
 
-        {/* Remember / Forgot */}
         <View style={styles.checkboxRow}>
           <View style={styles.rememberMe}>
             <FontAwesome
@@ -156,7 +175,6 @@ export default function LoginScreen() {
           <Text style={styles.forgotPassword}>Forgot Password</Text>
         </View>
 
-        {/* Buttons */}
         <View style={styles.buttonGroup}>
           <Button
             title="Login"
@@ -187,7 +205,6 @@ export default function LoginScreen() {
           />
         </View>
 
-        {/* Footer */}
         <Text style={styles.finalSignupText}>
           Don&apos;t have an account?{" "}
           <Link href="/signup" style={styles.signupLinkText}>
