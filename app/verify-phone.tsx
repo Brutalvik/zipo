@@ -21,7 +21,11 @@ import { FontAwesome } from "@expo/vector-icons";
 
 import Button from "@/components/Button/Button";
 import { auth } from "@/services/firebase";
-import { PhoneAuthProvider, linkWithCredential } from "firebase/auth";
+import {
+  PhoneAuthProvider,
+  linkWithCredential,
+  updatePhoneNumber,
+} from "firebase/auth";
 import { FirebaseRecaptchaVerifierModal } from "expo-firebase-recaptcha";
 import Constants from "expo-constants";
 
@@ -32,6 +36,15 @@ import {
   phoneVerifyFailed,
   phoneVerifySuccess,
 } from "@/lib/phoneGate";
+
+// ✅ Redux update (so Profile updates immediately after syncing)
+import { useAppDispatch } from "@/redux/hooks";
+import { updateUser } from "@/redux/slices/authSlice";
+
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
+if (!API_BASE) {
+  throw new Error("EXPO_PUBLIC_API_BASE is not set");
+}
 
 const ZIPO_COLORS = {
   primary: "#111827",
@@ -99,8 +112,10 @@ function formatCountdown(ms: number) {
 
 export default function VerifyPhoneScreen() {
   const router = useRouter();
+  const dispatch = useAppDispatch();
+
   const params = useLocalSearchParams<{ next?: string; from?: string }>();
-  const nextRoute = params?.next ? String(params.next) : "/(tabs)";
+  const nextRoute = params?.next ? String(params.next) : "/(tabs)/profile";
   const from = params?.from ? String(params.from) : "unknown";
 
   const [selectedCountry, setSelectedCountry] = useState<Country>(COUNTRIES[1]); // default ID
@@ -122,6 +137,85 @@ export default function VerifyPhoneScreen() {
 
   const codeInputRef = useRef<TextInput | null>(null);
 
+  // -----------------------------------------
+  // ✅ Helper: backend sync (Firebase token -> DB)
+  // -----------------------------------------
+  const syncPhoneFromFirebaseToDb = async () => {
+    const current = auth.currentUser;
+    if (!current) throw new Error("Not signed in");
+
+    await current.reload();
+
+    const idToken = await current.getIdToken(true);
+    if (!idToken) throw new Error("Missing auth token");
+
+    // ✅ Firebase truth:
+    const phone = current.phoneNumber; // string | null
+    const phoneVerified = !!phone;
+
+    if (!phone) {
+      // nothing to sync
+      return;
+    }
+
+    const res = await fetch(`${API_BASE}/api/users/phone`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        phone_e164: phone, // already E.164
+        phone_verified: phoneVerified,
+      }),
+    });
+
+    const text = await res.text();
+    if (!res.ok) throw new Error(text || "Failed to sync phone");
+
+    const json = JSON.parse(text);
+    if (json?.user) dispatch(updateUser(json.user));
+  };
+
+  // -----------------------------------------
+  // ✅ On screen entry: if Firebase already has phoneNumber -> sync + leave
+  // -----------------------------------------
+  useEffect(() => {
+    (async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      // Ensure auth is fresh
+      try {
+        await user.reload();
+      } catch {
+        // ignore
+      }
+
+      // Firebase sets currentUser.phoneNumber when phone is linked/verified
+      if (user.phoneNumber) {
+        try {
+          await syncPhoneFromFirebaseToDb();
+          Alert.alert("Phone verified", "Your phone is already verified.");
+        } catch (e: any) {
+          console.warn("phone sync on enter failed", e?.message || e);
+          // Even if sync fails, still exit verify screen (optional)
+          Alert.alert(
+            "Phone verified",
+            "Your phone is verified, but we couldn’t sync it to the server yet."
+          );
+        } finally {
+          // Go back to profile / next route
+          router.replace(nextRoute);
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // -----------------------------------------
+  // Reminder cooldown ticker
+  // -----------------------------------------
   useEffect(() => {
     let t: any;
 
@@ -156,11 +250,24 @@ export default function VerifyPhoneScreen() {
   const toggleDropdown = () =>
     dropdownOpen ? closeDropdown() : openDropdown();
 
+  // -----------------------------------------
+  // Send OTP
+  // -----------------------------------------
   const handleSendCode = async () => {
     const user = auth.currentUser;
     if (!user) {
       Alert.alert("Not signed in", "Please sign in again.");
       router.replace("/login");
+      return;
+    }
+
+    // If user already has phoneNumber (verified), don’t allow sending OTP again
+    if (user.phoneNumber) {
+      try {
+        await syncPhoneFromFirebaseToDb();
+      } catch {}
+      Alert.alert("Phone verified", "Your phone is already verified.");
+      router.replace(nextRoute);
       return;
     }
 
@@ -202,6 +309,9 @@ export default function VerifyPhoneScreen() {
     }
   };
 
+  // -----------------------------------------
+  // Confirm OTP
+  // -----------------------------------------
   const handleVerifyCode = async () => {
     const user = auth.currentUser;
     if (!user || !verificationId) {
@@ -224,19 +334,41 @@ export default function VerifyPhoneScreen() {
         verificationId,
         verificationCode
       );
-      await linkWithCredential(user, credential);
 
+      // ✅ Fix: if phone provider already linked, update instead of link
+      const hasPhoneProvider = (user.providerData ?? []).some(
+        (p: any) => p?.providerId === "phone"
+      );
+
+      if (hasPhoneProvider) {
+        await updatePhoneNumber(user, credential);
+      } else {
+        await linkWithCredential(user, credential);
+      }
+
+      await user.reload(); // refresh user.phoneNumber
       await phoneVerifySuccess();
+
+      // ✅ sync Firebase -> DB so profile updates
+      try {
+        await syncPhoneFromFirebaseToDb();
+      } catch (e: any) {
+        console.warn("sync after verify failed", e?.message || e);
+      }
 
       Alert.alert("Phone verified", "Your phone number has been verified.");
       router.replace(nextRoute);
     } catch (error: any) {
       await phoneVerifyFailed(error?.message);
       console.warn("Phone verify confirm error:", error);
-      Alert.alert(
-        "Verification failed",
-        error?.message || "The code was invalid or expired."
-      );
+
+      // Optional nicer message
+      const msg =
+        error?.code === "auth/provider-already-linked"
+          ? "This account already has a phone linked."
+          : error?.message || "The code was invalid or expired.";
+
+      Alert.alert("Verification failed", msg);
     } finally {
       setIsVerifying(false);
     }
@@ -248,7 +380,6 @@ export default function VerifyPhoneScreen() {
   };
 
   const handleRemindLater = async () => {
-    // Pick a default you like; 30 minutes is common
     await setPhoneRemindLater(30);
     router.replace(nextRoute);
   };
@@ -269,6 +400,8 @@ export default function VerifyPhoneScreen() {
     .padEnd(CODE_LENGTH, " ")
     .split("")
     .slice(0, CODE_LENGTH);
+
+  const remindActive = cooldownMs > 0;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -307,7 +440,6 @@ export default function VerifyPhoneScreen() {
                       important updates.
                     </Text>
 
-                    {/* Cooldown hint if "remind later" is active */}
                     {cooldownMs > 0 && (
                       <View style={styles.cooldownPill}>
                         <Text style={styles.cooldownText}>
@@ -410,15 +542,18 @@ export default function VerifyPhoneScreen() {
                         isLoading={isSending}
                       />
 
-                      <TouchableOpacity
-                        onPress={handleRemindLater}
-                        disabled={isSending}
-                        style={styles.skipBtn}
-                      >
-                        <Text style={styles.skipText}>
-                          Remind me later (30 min)
-                        </Text>
-                      </TouchableOpacity>
+                      {/* ✅ Remove remind later if reminder is active */}
+                      {!remindActive ? (
+                        <TouchableOpacity
+                          onPress={handleRemindLater}
+                          disabled={isSending}
+                          style={styles.skipBtn}
+                        >
+                          <Text style={styles.skipText}>
+                            Remind me later (30 min)
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
 
                       <TouchableOpacity
                         onPress={handleSkipForNow}
@@ -497,15 +632,18 @@ export default function VerifyPhoneScreen() {
                         </Text>
                       </TouchableOpacity>
 
-                      <TouchableOpacity
-                        onPress={handleRemindLater}
-                        disabled={isSending || isVerifying}
-                        style={styles.skipBtn}
-                      >
-                        <Text style={styles.skipText}>
-                          Remind me later (30 min)
-                        </Text>
-                      </TouchableOpacity>
+                      {/* ✅ Remove remind later if reminder is active */}
+                      {!remindActive ? (
+                        <TouchableOpacity
+                          onPress={handleRemindLater}
+                          disabled={isSending || isVerifying}
+                          style={styles.skipBtn}
+                        >
+                          <Text style={styles.skipText}>
+                            Remind me later (30 min)
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
 
                       <TouchableOpacity
                         onPress={handleSkipForNow}

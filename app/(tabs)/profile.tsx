@@ -9,7 +9,6 @@ import {
   Animated,
   Easing,
   Alert,
-  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -17,7 +16,7 @@ import {
   MaterialIcons,
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "@/hooks/useAuth";
@@ -76,6 +75,37 @@ export default function ProfileScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const { user, logout } = useAuth();
+
+  const refreshUserFromBackend = React.useCallback(async () => {
+    try {
+      const current = auth.currentUser;
+      const idToken = await current?.getIdToken(true);
+      if (!idToken) return;
+
+      const res = await fetch(`${API_BASE}/api/users/me`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const text = await res.text();
+      if (!res.ok) {
+        console.warn("GET /api/users/me failed:", text);
+        return;
+      }
+
+      const json = JSON.parse(text);
+
+      // expects { user: {...} }
+      if (json?.user) {
+        dispatch(updateUser(json.user));
+      }
+    } catch (e) {
+      console.warn("refreshUserFromBackend failed", e);
+    }
+  }, [dispatch]);
 
   const generalItems: MenuItem[] = [
     { id: "favorite", label: "Favorite Cars", iconType: "heart" },
@@ -171,7 +201,6 @@ export default function ProfileScreen() {
 
     const text = await res.text();
     if (!res.ok) {
-      // backend returns JSON errors usually
       throw new Error(text || "Failed to switch mode");
     }
 
@@ -185,13 +214,10 @@ export default function ProfileScreen() {
     try {
       track("app_mode_switch_tap", { from: mode, to: nextMode });
 
-      // Call backend (still important so DB stays source of truth)
       await updateModeOnBackend(nextMode);
 
-      // ✅ Update redux user (minimal + safe)
       dispatch(updateUser({ mode: nextMode }));
 
-      // ✅ Re-enter the app via the mode gate so correct tabs render
       router.replace("/(app)");
     } catch (e: any) {
       console.warn("Mode switch failed:", e?.message || e);
@@ -225,7 +251,6 @@ export default function ProfileScreen() {
     if (!shouldShowVerifyPhone) return;
     if (sessionPulseShown) return;
 
-    // if remind is active, don't pulse (keeps it subtle)
     if (remindActive) return;
 
     sessionPulseShown = true;
@@ -257,6 +282,12 @@ export default function ProfileScreen() {
     };
   }, [shouldShowVerifyPhone, remindActive, pulse]);
 
+  useFocusEffect(
+    React.useCallback(() => {
+      refreshUserFromBackend();
+    }, [refreshUserFromBackend])
+  );
+
   const verifyLabel = displayPhone ? "Verify phone number" : "Add phone number";
 
   const handleVerifyPhone = () => {
@@ -275,7 +306,6 @@ export default function ProfileScreen() {
   };
 
   const handleRemindLater = async () => {
-    // keep it simple: 24h remind in profile
     const remindUntil = Date.now() + 24 * 60 * 60 * 1000;
 
     let next = 1;
@@ -298,7 +328,6 @@ export default function ProfileScreen() {
       mode,
     });
 
-    // ✅ CTA stays visible, we just stop pulsing + show subtle text
     setRemindActive(true);
   };
 
@@ -309,7 +338,26 @@ export default function ProfileScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.brand}>Zipo</Text>
+          {/* Header: Brand left, Switch button right */}
+          <View style={styles.headerRow}>
+            <Text style={styles.brand}>Zipo</Text>
+
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={handleToggleMode}
+              style={styles.switchBtn}
+            >
+              <Text style={styles.switchBtnText}>
+                Switch to {isHost ? "guest" : "host"}
+              </Text>
+              <Feather
+                name="chevrons-right"
+                size={16}
+                color="rgba(17,24,39,0.55)"
+                style={{ marginLeft: 6 }}
+              />
+            </TouchableOpacity>
+          </View>
 
           {/* User card */}
           <View style={styles.profileCard}>
@@ -335,15 +383,14 @@ export default function ProfileScreen() {
                   {displayName}
                 </Text>
 
-                {/* Email directly under name */}
                 {!!displayEmail && (
                   <Text style={styles.profileEmail} numberOfLines={1}>
                     {displayEmail}
                   </Text>
                 )}
 
-                {/* Mode pill (Guest / Host) */}
-                <View style={styles.modeRow}>
+                {/* Host/Guest pill + Verified pill on SAME LINE */}
+                <View style={styles.modeVerifiedRow}>
                   <View
                     style={[
                       styles.modePill,
@@ -361,41 +408,31 @@ export default function ProfileScreen() {
                     </Text>
                   </View>
 
-                  <TouchableOpacity
-                    onPress={handleToggleMode}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.modeSwitchTiny}>
-                      Switch to {isHost ? "guest" : "host"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Verified pill */}
-                <View
-                  style={[
-                    styles.verifiedPill,
-                    !anyVerified && styles.notVerifiedPill,
-                  ]}
-                >
-                  <Feather
-                    name={anyVerified ? "check" : "alert-circle"}
-                    size={12}
-                    color={
-                      anyVerified
-                        ? "rgba(16,185,129,0.95)"
-                        : "rgba(245,158,11,0.95)"
-                    }
-                    style={{ marginRight: 6 }}
-                  />
-                  <Text
+                  <View
                     style={[
-                      styles.pillText,
-                      !anyVerified && styles.notVerifiedText,
+                      styles.verifiedPill,
+                      !anyVerified && styles.notVerifiedPill,
                     ]}
                   >
-                    {anyVerified ? "Verified" : "Not verified"}
-                  </Text>
+                    <Feather
+                      name={anyVerified ? "check" : "alert-circle"}
+                      size={12}
+                      color={
+                        anyVerified
+                          ? "rgba(16,185,129,0.95)"
+                          : "rgba(245,158,11,0.95)"
+                      }
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text
+                      style={[
+                        styles.pillText,
+                        !anyVerified && styles.notVerifiedText,
+                      ]}
+                    >
+                      {anyVerified ? "Verified" : "Not verified"}
+                    </Text>
+                  </View>
                 </View>
 
                 <Text style={styles.statusLine} numberOfLines={1}>
@@ -457,12 +494,15 @@ export default function ProfileScreen() {
                   />
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={handleRemindLater}
-                >
-                  <Text style={styles.remindLaterText}>Remind me later</Text>
-                </TouchableOpacity>
+                {/* ✅ Remove "Remind me later" option if reminder is active */}
+                {!remindActive ? (
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={handleRemindLater}
+                  >
+                    <Text style={styles.remindLaterText}>Remind me later</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : null}
 
@@ -585,12 +625,34 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F6F7FB" },
   scrollContent: { paddingHorizontal: 18, paddingTop: 10 },
 
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+
   brand: {
     fontSize: 26,
     fontWeight: "900",
     color: "#111827",
     letterSpacing: -0.4,
-    marginBottom: 10,
+  },
+
+  switchBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+  switchBtnText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
   },
 
   profileCard: {
@@ -667,12 +729,14 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
-  modeRow: {
+  modeVerifiedRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    flexWrap: "wrap",
     marginBottom: 8,
   },
+
   modePill: {
     alignSelf: "flex-start",
     flexDirection: "row",
@@ -695,11 +759,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "rgba(17,24,39,0.78)",
   },
-  modeSwitchTiny: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.45)",
-  },
 
   verifiedPill: {
     alignSelf: "flex-start",
@@ -711,7 +770,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(16,185,129,0.10)",
     borderWidth: 1,
     borderColor: "rgba(16,185,129,0.18)",
-    marginBottom: 6,
   },
   notVerifiedPill: {
     backgroundColor: "rgba(245,158,11,0.10)",
