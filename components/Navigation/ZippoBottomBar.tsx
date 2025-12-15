@@ -1,4 +1,3 @@
-// app/components/navigation/ZipoBottomBar.tsx
 import React from "react";
 import {
   View,
@@ -10,7 +9,8 @@ import {
   LayoutChangeEvent,
 } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Feather } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import type { TabConfig } from "./tablcons";
 
 const ZIPO_COLORS = {
   pillBg: "rgba(17, 24, 39, 0.78)",
@@ -22,7 +22,6 @@ const ZIPO_COLORS = {
   labelActive: "#EEF2FF",
   labelInactive: "rgba(229,231,235,0.85)",
 
-  // Acrylic bubble (neutral, no pink)
   bubbleBorder: "rgba(255,255,255,0.26)",
   bubbleInnerRing: "rgba(255,255,255,0.14)",
   bubbleFill: "rgba(255,255,255,0.12)",
@@ -32,24 +31,29 @@ const ZIPO_COLORS = {
   bubbleEdgeGlow: "rgba(255,255,255,0.20)",
 };
 
-const TAB_CONFIG: Record<
-  string,
-  { icon: keyof typeof Feather.glyphMap; label: string }
-> = {
-  index: { icon: "home", label: "Home" },
-  search: { icon: "search", label: "Search" },
-  inbox: { icon: "mail", label: "Inbox" },
-  notifications: { icon: "bell", label: "Alerts" },
-  profile: { icon: "user", label: "Profile" },
-};
-
 type TabLayout = { x: number; width: number };
+
+const renderTabIcon = (
+  icon: { family: "feather" | "material"; name: string },
+  isFocused: boolean
+) => {
+  const color = isFocused ? ZIPO_COLORS.iconActive : ZIPO_COLORS.iconInactive;
+
+  if (icon.family === "material") {
+    return (
+      <MaterialCommunityIcons name={icon.name as any} size={22} color={color} />
+    );
+  }
+
+  return <Feather name={icon.name as any} size={22} color={color} />;
+};
 
 export function ZipoBottomBar({
   state,
   descriptors,
   navigation,
-}: BottomTabBarProps) {
+  tabConfig,
+}: BottomTabBarProps & { tabConfig: TabConfig }) {
   const [tabLayouts, setTabLayouts] = React.useState<TabLayout[]>([]);
   const [indicatorWidth, setIndicatorWidth] = React.useState(0);
 
@@ -71,10 +75,6 @@ export function ZipoBottomBar({
     const layout = tabLayouts[state.index];
     if (!layout) return;
 
-    /**
-     * Wider bubble:
-     * smaller inset => bubble covers more of the tab button width
-     */
     const inset = -4;
     const targetX = layout.x + inset;
     const targetWidth = Math.max(0, layout.width - inset * 2);
@@ -92,35 +92,21 @@ export function ZipoBottomBar({
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
       <View style={styles.pill}>
-        {/* Frosted overlays on the pill */}
         <View pointerEvents="none" style={styles.frostOverlay} />
         <View pointerEvents="none" style={styles.topSheen} />
 
-        {/* Active frosted acrylic bubble */}
         {tabLayouts[state.index] && indicatorWidth > 0 && (
           <Animated.View
             pointerEvents="none"
             style={[
               styles.acrylicBubble,
-              {
-                width: indicatorWidth,
-                transform: [{ translateX }],
-              },
+              { width: indicatorWidth, transform: [{ translateX }] },
             ]}
           >
-            {/* Base frosted fill */}
             <View pointerEvents="none" style={styles.bubbleFill} />
-
-            {/* Top glare (acrylic shine) */}
             <View pointerEvents="none" style={styles.bubbleGlareTop} />
-
-            {/* Bottom tint for depth */}
             <View pointerEvents="none" style={styles.bubbleTintBottom} />
-
-            {/* Inner ring highlight */}
             <View pointerEvents="none" style={styles.bubbleInnerRing} />
-
-            {/* Edge highlight (thin) */}
             <View pointerEvents="none" style={styles.bubbleEdgeHighlight} />
           </Animated.View>
         )}
@@ -142,14 +128,11 @@ export function ZipoBottomBar({
           };
 
           const onLongPress = () => {
-            navigation.emit({
-              type: "tabLongPress",
-              target: route.key,
-            });
+            navigation.emit({ type: "tabLongPress", target: route.key });
           };
 
           const config =
-            TAB_CONFIG[route.name] ??
+            tabConfig[route.name] ??
             ({
               icon: "circle",
               label: route.name,
@@ -168,15 +151,7 @@ export function ZipoBottomBar({
               onLayout={handleTabLayout(index)}
             >
               <View style={styles.tabInner}>
-                <Feather
-                  name={config.icon}
-                  size={22}
-                  color={
-                    isFocused
-                      ? ZIPO_COLORS.iconActive
-                      : ZIPO_COLORS.iconInactive
-                  }
-                />
+                {renderTabIcon(config.icon, isFocused)}
                 <Text
                   numberOfLines={1}
                   style={[styles.tabLabel, isFocused && styles.tabLabelActive]}
@@ -236,10 +211,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.06)",
   },
 
-  /**
-   * ✅ Frosted acrylic bubble
-   * Taller + full height feel + real acrylic cues
-   */
   acrylicBubble: {
     position: "absolute",
     top: 3,
@@ -250,8 +221,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ZIPO_COLORS.bubbleBorder,
     zIndex: 0,
-
-    // outer soft glow
     shadowColor: ZIPO_COLORS.bubbleEdgeGlow,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
@@ -262,7 +231,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: ZIPO_COLORS.bubbleFill,
   },
-
   bubbleGlareTop: {
     position: "absolute",
     left: 0,
@@ -272,7 +240,6 @@ const styles = StyleSheet.create({
     backgroundColor: ZIPO_COLORS.bubbleTopGlare,
     opacity: 0.55,
   },
-
   bubbleTintBottom: {
     position: "absolute",
     left: 0,
@@ -282,8 +249,6 @@ const styles = StyleSheet.create({
     backgroundColor: ZIPO_COLORS.bubbleBottomTint,
     opacity: 0.65,
   },
-
-  // inner ring (creates that acrylic “edge thickness” look)
   bubbleInnerRing: {
     position: "absolute",
     left: 3,
@@ -294,8 +259,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ZIPO_COLORS.bubbleInnerRing,
   },
-
-  // super thin edge highlight line for realism
   bubbleEdgeHighlight: {
     position: "absolute",
     left: 1,
@@ -312,19 +275,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     zIndex: 1,
   },
-
-  tabInner: {
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-  },
-
+  tabInner: { alignItems: "center", justifyContent: "center", gap: 2 },
   tabLabel: {
     fontSize: 11,
     fontWeight: "600",
     color: ZIPO_COLORS.labelInactive,
   },
-  tabLabelActive: {
-    color: ZIPO_COLORS.labelActive,
-  },
+  tabLabelActive: { color: ZIPO_COLORS.labelActive },
 });

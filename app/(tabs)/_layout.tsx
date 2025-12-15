@@ -1,14 +1,14 @@
 import React from "react";
 import { Tabs } from "expo-router";
 import { ZipoBottomBar } from "@/components/navigation/ZippoBottomBar";
-
-export default function TabsLayout() {
+import { GUEST_TAB_CONFIG } from "@/components/navigation/tabConfig";
+export default function GuestTabsLayout() {
   return (
     <Tabs
-      screenOptions={{
-        headerShown: false,
-      }}
-      tabBar={(props) => <ZipoBottomBar {...props} />}
+      screenOptions={{ headerShown: false }}
+      tabBar={(props) => (
+        <ZipoBottomBar {...props} tabConfig={GUEST_TAB_CONFIG} />
+      )}
     >
       <Tabs.Screen name="index" />
       <Tabs.Screen name="search" />

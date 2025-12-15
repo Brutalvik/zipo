@@ -9,6 +9,7 @@ import {
   Animated,
   Easing,
   Alert,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -20,6 +21,9 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "@/hooks/useAuth";
+import { auth } from "@/services/firebase";
+import { useAppDispatch } from "@/redux/hooks";
+import { updateUser } from "@/redux/slices/authSlice";
 
 type MenuItem = {
   id: string;
@@ -38,13 +42,18 @@ type MenuItem = {
   onPress?: () => void;
 };
 
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
+
+if (!API_BASE) {
+  throw new Error("EXPO_PUBLIC_API_BASE is not set");
+}
+
 // -------------------------
-// Storage keys
+// Storage keys (only for remind later + analytics counters)
 // -------------------------
 const STORAGE_KEYS = {
   PHONE_REMIND_UNTIL: "zipo.phoneVerify.remindUntil",
   PHONE_SKIP_COUNT: "zipo.phoneVerify.skipCount",
-  APP_MODE: "zipo.appMode", // "guest" | "host"
 };
 
 // Pulse dot once per app session (not persisted)
@@ -65,6 +74,7 @@ function track(event: string, props?: Record<string, any>) {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const dispatch = useAppDispatch();
   const { user, logout } = useAuth();
 
   const generalItems: MenuItem[] = [
@@ -91,10 +101,15 @@ export default function ProfileScreen() {
     "Guest User";
 
   const displayEmail = (user as any)?.email ?? "";
-  const displayPhone = (user as any)?.phoneNumber ?? (user as any)?.phone ?? "";
+  const displayPhone =
+    (user as any)?.phoneNumber ??
+    (user as any)?.phone ??
+    (user as any)?.phone_e164 ??
+    "";
 
   const avatarUrl =
     (user as any)?.photoURL ||
+    (user as any)?.profile_photo_url ||
     (user as any)?.photoUrl ||
     (user as any)?.avatarUrl ||
     undefined;
@@ -108,13 +123,18 @@ export default function ProfileScreen() {
 
   // verification flags (supports multiple field names)
   const emailVerified = boolish(
-    (user as any)?.emailVerified ?? (user as any)?.isEmailVerified
+    (user as any)?.emailVerified ??
+      (user as any)?.email_verified ??
+      (user as any)?.isEmailVerified
   );
+
   const phoneVerified = boolish(
     (user as any)?.phoneVerified ??
+      (user as any)?.phone_verified ??
       (user as any)?.isPhoneVerified ??
       (user as any)?.phoneNumberVerified
   );
+
   const anyVerified = emailVerified || phoneVerified;
 
   const statusLine = `${
@@ -122,66 +142,81 @@ export default function ProfileScreen() {
   } • ${phoneVerified ? "Phone verified" : "Phone not verified"}`;
 
   // -------------------------
-  // Mode (Guest/Host)
+  // Mode (Guest/Host) from DB user.mode
   // -------------------------
-  const [mode, setMode] = React.useState<AppMode>("guest");
+  const mode: AppMode = (
+    (user as any)?.mode === "host" || (user as any)?.mode === "guest"
+      ? (user as any)?.mode
+      : "guest"
+  ) as AppMode;
 
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEYS.APP_MODE);
-        if (raw === "host" || raw === "guest") setMode(raw);
-        else setMode("guest");
-      } catch {
-        setMode("guest");
-      }
-    })();
-  }, []);
+  const isHost = mode === "host";
 
-  const switchToHostMode = async () => {
-    // Stub for now (we’ll build host later)
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.APP_MODE, "host");
-      setMode("host");
-    } catch {
-      // ignore
-      setMode("host");
+  const updateModeOnBackend = async (nextMode: AppMode) => {
+    const current = auth.currentUser;
+    const idToken = await current?.getIdToken(true);
+
+    if (!idToken) {
+      throw new Error("Missing auth token");
     }
 
-    track("app_mode_switched", { to: "host", from: mode });
+    const res = await fetch(`${API_BASE}/api/users/mode`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mode: nextMode }),
+    });
 
-    Alert.alert(
-      "Host mode coming soon",
-      "Host mode UI and features will be added next. For now, this just toggles the mode state."
-    );
-  };
-
-  const switchToGuestMode = async () => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEYS.APP_MODE, "guest");
-      setMode("guest");
-    } catch {
-      setMode("guest");
+    const text = await res.text();
+    if (!res.ok) {
+      // backend returns JSON errors usually
+      throw new Error(text || "Failed to switch mode");
     }
-    track("app_mode_switched", { to: "guest", from: mode });
+
+    const json = JSON.parse(text);
+    return json.user;
+  };
+
+  const handleToggleMode = async () => {
+    const nextMode: AppMode = isHost ? "guest" : "host";
+
+    try {
+      track("app_mode_switch_tap", { from: mode, to: nextMode });
+
+      // Call backend (still important so DB stays source of truth)
+      await updateModeOnBackend(nextMode);
+
+      // ✅ Update redux user (minimal + safe)
+      dispatch(updateUser({ mode: nextMode }));
+
+      // ✅ Re-enter the app via the mode gate so correct tabs render
+      router.replace("/(app)");
+    } catch (e: any) {
+      console.warn("Mode switch failed:", e?.message || e);
+      Alert.alert("Error", e?.message || "Could not switch mode.");
+    }
   };
 
   // -------------------------
-  // Verify Phone CTA: remind-later + pulse dot
+  // Verify Phone CTA: always visible if not verified
+  // Remind later still tracked, but DOES NOT hide CTA anymore.
   // -------------------------
-  const [hideVerifyPhone, setHideVerifyPhone] = React.useState(false);
+  const [remindActive, setRemindActive] = React.useState(false);
 
   const pulse = React.useRef(new Animated.Value(0)).current;
-  const shouldShowVerifyPhone = !phoneVerified && !hideVerifyPhone;
+
+  const shouldShowVerifyPhone = !phoneVerified;
 
   React.useEffect(() => {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEYS.PHONE_REMIND_UNTIL);
         const remindUntil = raw ? Number(raw) : 0;
-        setHideVerifyPhone(!!(remindUntil && Date.now() < remindUntil));
+        setRemindActive(!!(remindUntil && Date.now() < remindUntil));
       } catch {
-        setHideVerifyPhone(false);
+        setRemindActive(false);
       }
     })();
   }, []);
@@ -189,6 +224,9 @@ export default function ProfileScreen() {
   React.useEffect(() => {
     if (!shouldShowVerifyPhone) return;
     if (sessionPulseShown) return;
+
+    // if remind is active, don't pulse (keeps it subtle)
+    if (remindActive) return;
 
     sessionPulseShown = true;
 
@@ -217,7 +255,7 @@ export default function ProfileScreen() {
       clearTimeout(t);
       anim.stop();
     };
-  }, [shouldShowVerifyPhone, pulse]);
+  }, [shouldShowVerifyPhone, remindActive, pulse]);
 
   const verifyLabel = displayPhone ? "Verify phone number" : "Add phone number";
 
@@ -237,6 +275,7 @@ export default function ProfileScreen() {
   };
 
   const handleRemindLater = async () => {
+    // keep it simple: 24h remind in profile
     const remindUntil = Date.now() + 24 * 60 * 60 * 1000;
 
     let next = 1;
@@ -258,10 +297,10 @@ export default function ProfileScreen() {
       skipCount: next,
       mode,
     });
-    setHideVerifyPhone(true);
-  };
 
-  const isHost = mode === "host";
+    // ✅ CTA stays visible, we just stop pulsing + show subtle text
+    setRemindActive(true);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
@@ -314,9 +353,7 @@ export default function ProfileScreen() {
                     <Feather
                       name={isHost ? "briefcase" : "user"}
                       size={12}
-                      color={
-                        isHost ? "rgba(17,24,39,0.9)" : "rgba(17,24,39,0.85)"
-                      }
+                      color="rgba(17,24,39,0.85)"
                       style={{ marginRight: 6 }}
                     />
                     <Text style={styles.modePillText}>
@@ -324,15 +361,14 @@ export default function ProfileScreen() {
                     </Text>
                   </View>
 
-                  {/* Optional quick toggle back (tiny) */}
-                  {isHost ? (
-                    <TouchableOpacity
-                      onPress={switchToGuestMode}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.modeSwitchTiny}>Switch to guest</Text>
-                    </TouchableOpacity>
-                  ) : null}
+                  <TouchableOpacity
+                    onPress={handleToggleMode}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.modeSwitchTiny}>
+                      Switch to {isHost ? "guest" : "host"}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 {/* Verified pill */}
@@ -368,7 +404,7 @@ export default function ProfileScreen() {
               </View>
             </View>
 
-            {/* Verify phone CTA */}
+            {/* Verify phone CTA (ALWAYS visible if not verified) */}
             {shouldShowVerifyPhone ? (
               <View style={styles.verifyBlock}>
                 <TouchableOpacity
@@ -379,28 +415,39 @@ export default function ProfileScreen() {
                   <View style={styles.verifyLeft}>
                     <View style={styles.verifyIconWrap}>
                       <Feather name="phone" size={16} color="#111827" />
-                      <Animated.View
-                        pointerEvents="none"
-                        style={[
-                          styles.pulseDot,
-                          {
-                            transform: [
-                              {
-                                scale: pulse.interpolate({
-                                  inputRange: [0, 1],
-                                  outputRange: [1, 1.45],
-                                }),
-                              },
-                            ],
-                            opacity: pulse.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [0.55, 1],
-                            }),
-                          },
-                        ]}
-                      />
+
+                      {!remindActive && (
+                        <Animated.View
+                          pointerEvents="none"
+                          style={[
+                            styles.pulseDot,
+                            {
+                              transform: [
+                                {
+                                  scale: pulse.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [1, 1.45],
+                                  }),
+                                },
+                              ],
+                              opacity: pulse.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.55, 1],
+                              }),
+                            },
+                          ]}
+                        />
+                      )}
                     </View>
-                    <Text style={styles.verifyText}>{verifyLabel}</Text>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.verifyText}>{verifyLabel}</Text>
+                      {remindActive ? (
+                        <Text style={styles.remindActiveHint}>
+                          Reminder active — we’ll ask again later.
+                        </Text>
+                      ) : null}
+                    </View>
                   </View>
 
                   <Feather
@@ -418,25 +465,6 @@ export default function ProfileScreen() {
                 </TouchableOpacity>
               </View>
             ) : null}
-
-            {/* Switch to Host mode row (only shown in guest mode) */}
-            {!isHost && (
-              <TouchableOpacity
-                activeOpacity={0.9}
-                style={styles.hostRow}
-                onPress={switchToHostMode}
-              >
-                <View style={styles.hostLeft}>
-                  <Feather name="briefcase" size={16} color="#111827" />
-                  <Text style={styles.hostRowText}>Switch to Host mode</Text>
-                </View>
-                <Feather
-                  name="chevron-right"
-                  size={18}
-                  color="rgba(17,24,39,0.30)"
-                />
-              </TouchableOpacity>
-            )}
 
             {/* Edit profile row */}
             <TouchableOpacity activeOpacity={0.9} style={styles.editRow}>
@@ -689,7 +717,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(245,158,11,0.10)",
     borderColor: "rgba(245,158,11,0.18)",
   },
-  pillText: { fontSize: 12, fontWeight: "900", color: "rgba(16,185,129,0.95)" },
+  pillText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(16,185,129,0.95)",
+  },
   notVerifiedText: { color: "rgba(245,158,11,0.95)" },
 
   statusLine: { fontSize: 12, fontWeight: "700", color: "rgba(17,24,39,0.42)" },
@@ -707,7 +739,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  verifyLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  verifyLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
   verifyIconWrap: {
     width: 22,
     height: 22,
@@ -727,27 +759,18 @@ const styles = StyleSheet.create({
     borderColor: "#FFFFFF",
   },
   verifyText: { fontSize: 15, fontWeight: "900", color: "#111827" },
+  remindActiveHint: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.40)",
+  },
   remindLaterText: {
     marginTop: 10,
     fontSize: 13,
     fontWeight: "800",
     color: "rgba(17,24,39,0.40)",
   },
-
-  hostRow: {
-    marginTop: 14,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    backgroundColor: "rgba(59,130,246,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(59,130,246,0.16)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  hostLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  hostRowText: { fontSize: 15, fontWeight: "900", color: "#111827" },
 
   editRow: {
     marginTop: 14,
@@ -810,6 +833,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(220,38,38,0.06)",
   },
 
-  menuLabel: { fontSize: 15, fontWeight: "900", color: "rgba(17,24,39,0.88)" },
+  menuLabel: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.88)",
+  },
   menuLabelDanger: { color: "rgba(220,38,38,0.85)" },
 });

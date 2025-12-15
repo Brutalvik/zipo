@@ -87,18 +87,24 @@ export default function LoginScreen() {
         // Alert.alert("Signed in", "Signed in successfully, syncing profile...");
       }
 
-      const userObject = {
+      const userObject: IUser = {
         id: user.uid,
+        firebase_uid: dbUser?.firebase_uid ?? user.uid,
+
         name: user.displayName || dbUser?.full_name || email,
         email: user.email ?? dbUser?.email ?? email,
+
         photoURL: dbUser?.profile_photo_url ?? user.photoURL ?? null,
         phoneNumber: dbUser?.phone_e164 ?? user.phoneNumber ?? null,
+
         emailVerified: user.emailVerified,
-        providerId: user.providerId ?? null,
+        phoneVerified: dbUser?.phone_verified ?? false,
+
+        mode: dbUser?.mode === "host" ? "host" : "guest",
       };
 
       dispatch(signIn(userObject));
-      router.replace("/(tabs)");
+      router.replace("/(app)");
     } catch (error: any) {
       console.warn("Login error:", error);
       Alert.alert(

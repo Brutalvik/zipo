@@ -1,18 +1,8 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-export interface User {
-  id: string;
-  name: string; // display name or derived from email
-  email: string;
-  photoURL?: string | null;
-  phoneNumber?: string | null;
-  emailVerified?: boolean;
-  providerId?: string | null;
-}
-
 interface AuthState {
   isAuthenticated: boolean;
-  user: User | null;
+  user: IUser | null;
 }
 
 const initialState: AuthState = {
@@ -25,7 +15,7 @@ export const authSlice = createSlice({
   initialState,
   reducers: {
     // Store the FULL user object here
-    signIn: (state, action: PayloadAction<User>) => {
+    signIn: (state, action: PayloadAction<IUser>) => {
       state.isAuthenticated = true;
       state.user = action.payload;
     },
@@ -33,8 +23,14 @@ export const authSlice = createSlice({
       state.isAuthenticated = false;
       state.user = null;
     },
+
+    // Optional: update only some fields (nice for mode switch / profile patch)
+    updateUser: (state, action: PayloadAction<Partial<IUser>>) => {
+      if (!state.user) return;
+      state.user = { ...state.user, ...action.payload };
+    },
   },
 });
 
-export const { signIn, signOut } = authSlice.actions;
+export const { signIn, signOut, updateUser } = authSlice.actions;
 export default authSlice.reducer;
