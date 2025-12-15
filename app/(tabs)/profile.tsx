@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { auth } from "@/services/firebase";
 import { useAppDispatch } from "@/redux/hooks";
 import { updateUser } from "@/redux/slices/authSlice";
+import Button from "@/components/Button/Button";
 
 type MenuItem = {
   id: string;
@@ -47,15 +48,11 @@ if (!API_BASE) {
   throw new Error("EXPO_PUBLIC_API_BASE is not set");
 }
 
-// -------------------------
-// Storage keys (only for remind later + analytics counters)
-// -------------------------
 const STORAGE_KEYS = {
   PHONE_REMIND_UNTIL: "zipo.phoneVerify.remindUntil",
   PHONE_SKIP_COUNT: "zipo.phoneVerify.skipCount",
 };
 
-// Pulse dot once per app session (not persisted)
 let sessionPulseShown = false;
 
 type AppMode = "guest" | "host";
@@ -64,9 +61,6 @@ function boolish(v: any) {
   return v === true || v === "true" || v === 1 || v === "1";
 }
 
-// -------------------------
-// Analytics hook (swap later)
-// -------------------------
 function track(event: string, props?: Record<string, any>) {
   console.log(`[analytics] ${event}`, props ?? {});
 }
@@ -97,8 +91,6 @@ export default function ProfileScreen() {
       }
 
       const json = JSON.parse(text);
-
-      // expects { user: {...} }
       if (json?.user) {
         dispatch(updateUser(json.user));
       }
@@ -123,7 +115,6 @@ export default function ProfileScreen() {
     { id: "logout", label: "Log out", iconType: "logout", onPress: logout },
   ];
 
-  // --- user fields (resilient)
   const displayName =
     (user as any)?.name ??
     (user as any)?.fullName ??
@@ -151,7 +142,6 @@ export default function ProfileScreen() {
       ? displayName.trim().charAt(0).toUpperCase()
       : "?";
 
-  // verification flags (supports multiple field names)
   const emailVerified = boolish(
     (user as any)?.emailVerified ??
       (user as any)?.email_verified ??
@@ -171,9 +161,6 @@ export default function ProfileScreen() {
     emailVerified ? "Email verified" : "Email not verified"
   } • ${phoneVerified ? "Phone verified" : "Phone not verified"}`;
 
-  // -------------------------
-  // Mode (Guest/Host) from DB user.mode
-  // -------------------------
   const mode: AppMode = (
     (user as any)?.mode === "host" || (user as any)?.mode === "guest"
       ? (user as any)?.mode
@@ -186,9 +173,7 @@ export default function ProfileScreen() {
     const current = auth.currentUser;
     const idToken = await current?.getIdToken(true);
 
-    if (!idToken) {
-      throw new Error("Missing auth token");
-    }
+    if (!idToken) throw new Error("Missing auth token");
 
     const res = await fetch(`${API_BASE}/api/users/mode`, {
       method: "PATCH",
@@ -200,9 +185,7 @@ export default function ProfileScreen() {
     });
 
     const text = await res.text();
-    if (!res.ok) {
-      throw new Error(text || "Failed to switch mode");
-    }
+    if (!res.ok) throw new Error(text || "Failed to switch mode");
 
     const json = JSON.parse(text);
     return json.user;
@@ -210,12 +193,10 @@ export default function ProfileScreen() {
 
   const handleToggleMode = async () => {
     const nextMode: AppMode = isHost ? "guest" : "host";
-
     try {
       track("app_mode_switch_tap", { from: mode, to: nextMode });
 
       await updateModeOnBackend(nextMode);
-
       dispatch(updateUser({ mode: nextMode }));
 
       router.replace("/(app)");
@@ -225,14 +206,8 @@ export default function ProfileScreen() {
     }
   };
 
-  // -------------------------
-  // Verify Phone CTA: always visible if not verified
-  // Remind later still tracked, but DOES NOT hide CTA anymore.
-  // -------------------------
   const [remindActive, setRemindActive] = React.useState(false);
-
   const pulse = React.useRef(new Animated.Value(0)).current;
-
   const shouldShowVerifyPhone = !phoneVerified;
 
   React.useEffect(() => {
@@ -250,7 +225,6 @@ export default function ProfileScreen() {
   React.useEffect(() => {
     if (!shouldShowVerifyPhone) return;
     if (sessionPulseShown) return;
-
     if (remindActive) return;
 
     sessionPulseShown = true;
@@ -301,7 +275,7 @@ export default function ProfileScreen() {
 
     router.push({
       pathname: "/verify-phone",
-      params: { next: "/(tabs)", from: "profile" },
+      params: { next: "/(tabs)/profile", from: "profile" },
     } as any);
   };
 
@@ -318,9 +292,7 @@ export default function ProfileScreen() {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.PHONE_SKIP_COUNT);
       next = (raw ? Number(raw) : 0) + 1;
       await AsyncStorage.setItem(STORAGE_KEYS.PHONE_SKIP_COUNT, String(next));
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     track("phone_verify_remind_later", {
       from: "profile",
@@ -342,21 +314,16 @@ export default function ProfileScreen() {
           <View style={styles.headerRow}>
             <Text style={styles.brand}>Zipo</Text>
 
-            <TouchableOpacity
-              activeOpacity={0.85}
-              onPress={handleToggleMode}
-              style={styles.switchBtn}
-            >
-              <Text style={styles.switchBtnText}>
-                Switch to {isHost ? "guest" : "host"}
-              </Text>
-              <Feather
-                name="chevrons-right"
-                size={16}
-                color="rgba(17,24,39,0.55)"
-                style={{ marginLeft: 6 }}
+            {/* ✅ Glass button using your custom component */}
+            <View style={{ width: 168 }}>
+              <Button
+                title={`Switch to ${isHost ? "guest" : "host"}`}
+                variant="primary"
+                size="sm"
+                onPress={handleToggleMode}
+                iconName="exchange"
               />
-            </TouchableOpacity>
+            </View>
           </View>
 
           {/* User card */}
@@ -389,7 +356,7 @@ export default function ProfileScreen() {
                   </Text>
                 )}
 
-                {/* Host/Guest pill + Verified pill on SAME LINE */}
+                {/* ✅ polished pills */}
                 <View style={styles.modeVerifiedRow}>
                   <View
                     style={[
@@ -400,10 +367,17 @@ export default function ProfileScreen() {
                     <Feather
                       name={isHost ? "briefcase" : "user"}
                       size={12}
-                      color="rgba(17,24,39,0.85)"
+                      color={
+                        isHost ? "rgba(37,99,235,0.90)" : "rgba(17,24,39,0.80)"
+                      }
                       style={{ marginRight: 6 }}
                     />
-                    <Text style={styles.modePillText}>
+                    <Text
+                      style={[
+                        styles.modePillText,
+                        isHost ? styles.modeTextHost : styles.modeTextGuest,
+                      ]}
+                    >
                       {isHost ? "Host mode" : "Guest mode"}
                     </Text>
                   </View>
@@ -411,11 +385,11 @@ export default function ProfileScreen() {
                   <View
                     style={[
                       styles.verifiedPill,
-                      !anyVerified && styles.notVerifiedPill,
+                      anyVerified ? styles.verifiedYes : styles.verifiedNo,
                     ]}
                   >
                     <Feather
-                      name={anyVerified ? "check" : "alert-circle"}
+                      name={anyVerified ? "check-circle" : "alert-circle"}
                       size={12}
                       color={
                         anyVerified
@@ -427,7 +401,7 @@ export default function ProfileScreen() {
                     <Text
                       style={[
                         styles.pillText,
-                        !anyVerified && styles.notVerifiedText,
+                        anyVerified ? styles.pillTextYes : styles.pillTextNo,
                       ]}
                     >
                       {anyVerified ? "Verified" : "Not verified"}
@@ -441,7 +415,7 @@ export default function ProfileScreen() {
               </View>
             </View>
 
-            {/* Verify phone CTA (ALWAYS visible if not verified) */}
+            {/* Verify phone CTA */}
             {shouldShowVerifyPhone ? (
               <View style={styles.verifyBlock}>
                 <TouchableOpacity
@@ -494,7 +468,6 @@ export default function ProfileScreen() {
                   />
                 </TouchableOpacity>
 
-                {/* ✅ Remove "Remind me later" option if reminder is active */}
                 {!remindActive ? (
                   <TouchableOpacity
                     activeOpacity={0.85}
@@ -506,7 +479,6 @@ export default function ProfileScreen() {
               </View>
             ) : null}
 
-            {/* Edit profile row */}
             <TouchableOpacity activeOpacity={0.9} style={styles.editRow}>
               <Text style={styles.editRowText}>Edit profile</Text>
               <Feather
@@ -517,7 +489,6 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* GENERAL */}
           <Section title="General">
             {generalItems.map((item, index) => (
               <MenuRow
@@ -528,7 +499,6 @@ export default function ProfileScreen() {
             ))}
           </Section>
 
-          {/* SUPPORT */}
           <Section title="Support">
             {supportItems.map((item, index) => (
               <MenuRow
@@ -639,22 +609,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.4,
   },
 
-  switchBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(17,24,39,0.10)",
-  },
-  switchBtnText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.70)",
-  },
-
   profileCard: {
     borderRadius: 22,
     backgroundColor: "#FFFFFF",
@@ -751,14 +705,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(17,24,39,0.10)",
   },
   modePillHost: {
-    backgroundColor: "rgba(59,130,246,0.08)",
-    borderColor: "rgba(59,130,246,0.18)",
+    backgroundColor: "rgba(37,99,235,0.08)",
+    borderColor: "rgba(37,99,235,0.18)",
   },
-  modePillText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.78)",
-  },
+  modePillText: { fontSize: 12, fontWeight: "900" },
+  modeTextGuest: { color: "rgba(17,24,39,0.78)" },
+  modeTextHost: { color: "rgba(37,99,235,0.95)" },
 
   verifiedPill: {
     alignSelf: "flex-start",
@@ -767,20 +719,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: "rgba(16,185,129,0.10)",
     borderWidth: 1,
+  },
+  verifiedYes: {
+    backgroundColor: "rgba(16,185,129,0.10)",
     borderColor: "rgba(16,185,129,0.18)",
   },
-  notVerifiedPill: {
+  verifiedNo: {
     backgroundColor: "rgba(245,158,11,0.10)",
     borderColor: "rgba(245,158,11,0.18)",
   },
-  pillText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(16,185,129,0.95)",
-  },
-  notVerifiedText: { color: "rgba(245,158,11,0.95)" },
+  pillText: { fontSize: 12, fontWeight: "900" },
+  pillTextYes: { color: "rgba(16,185,129,0.95)" },
+  pillTextNo: { color: "rgba(245,158,11,0.95)" },
 
   statusLine: { fontSize: 12, fontWeight: "700", color: "rgba(17,24,39,0.42)" },
 

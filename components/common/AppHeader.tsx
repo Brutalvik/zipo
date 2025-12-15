@@ -1,3 +1,4 @@
+// components/AppHeader.tsx
 import React, { useMemo } from "react";
 import {
   Image,
@@ -10,13 +11,14 @@ import {
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useAppSelector } from "@/redux/hooks";
-import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
+import { COLORS, SHADOW_CARD } from "@/theme/ui";
 
 type Props = {
   title?: string;
   notificationCount?: number;
   onPressNotifications?: () => void;
-  onPressProfile?: () => void; // optional override
+  onPressProfile?: () => void;
+  rightSlot?: React.ReactNode; // ✅ add this
 };
 
 function getInitials(name?: string | null, email?: string | null) {
@@ -32,6 +34,7 @@ export default function AppHeader({
   notificationCount = 0,
   onPressNotifications,
   onPressProfile,
+  rightSlot,
 }: Props) {
   const router = useRouter();
   const { user } = useAppSelector((s) => s.auth);
@@ -57,14 +60,11 @@ export default function AppHeader({
 
   const handleProfilePress = () => {
     if (onPressProfile) return onPressProfile();
-    // Default: navigate to profile tab screen
     router.push("/(tabs)/profile");
   };
 
   const handleNotificationsPress = () => {
     if (onPressNotifications) return onPressNotifications();
-    // Optional default route if you have it:
-    // router.push("/(tabs)/notifications");
   };
 
   return (
@@ -72,12 +72,12 @@ export default function AppHeader({
       {/* LEFT */}
       <View style={styles.left}>
         <Text style={styles.title}>{title}</Text>
-        {/* Optional: small subtitle/region later */}
-        {/* <Text style={styles.subtitle}>Find your next ride</Text> */}
       </View>
 
       {/* RIGHT */}
       <View style={styles.right}>
+        {rightSlot /* ✅ injected stuff comes first */}
+
         <Pressable
           style={({ pressed }) => [
             styles.iconBtn,
@@ -110,7 +110,6 @@ export default function AppHeader({
           accessibilityLabel="Profile"
           android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
         >
-          {/* subtle glass overlay */}
           <View pointerEvents="none" style={styles.glassOverlay} />
 
           {photoURL ? (
@@ -136,23 +135,15 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
 
-  left: {
-    flexDirection: "column",
-    gap: 2,
-  },
+  left: { flexDirection: "column", gap: 2 },
 
+  // ✅ match Profile header size
   title: {
-    fontSize: 22,
+    fontSize: 26,
     fontWeight: "900",
     color: COLORS.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
-
-  // subtitle: {
-  //   fontSize: 12,
-  //   fontWeight: "700",
-  //   color: "rgba(0,0,0,0.45)",
-  // },
 
   right: {
     flexDirection: "row",
@@ -186,11 +177,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.95)",
   },
 
-  badgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "900",
-  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
 
   avatarWrap: {
     width: 42,
@@ -206,23 +193,10 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(255,255,255,0.08)",
   },
-
   avatar: { width: "100%", height: "100%" },
 
-  initialsWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  initialsWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  initials: { fontSize: 14, fontWeight: "900", color: COLORS.text },
 
-  initials: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: COLORS.text,
-  },
-
-  pressed: {
-    opacity: 0.86,
-    transform: [{ scale: 0.98 }],
-  },
+  pressed: { opacity: 0.86, transform: [{ scale: 0.98 }] },
 });
