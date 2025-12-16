@@ -1,327 +1,215 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
-  SafeAreaView,
-  ScrollView,
-  View,
   FlatList,
+  Pressable,
+  RefreshControl,
   StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
-import AppHeader from "@/components/common/AppHeader";
+import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks";
+import {
+  fetchCars,
+  selectCars,
+  selectCarsStatus,
+  selectCarsPage,
+} from "@/redux/slices/carSlice";
+
 import SearchInput from "@/components/cars/SearchInput";
-import SectionHeader from "@/components/cars/SectionHeader";
-import BrandChip from "@/components/cars/BrandChip";
-import CarGridCard from "@/components/cars/CarGridCard";
-import PopularMiniCard from "@/components/cars/PopularMiniCard";
+import CarListCard from "@/components/cars/CarListCard";
 
-import AnimatedFilterModal, {
-  FilterState,
-} from "@/components/cars/AnimatedFilterModal";
-import { loadJSON, saveJSON } from "@/lib/persist";
-
-import carsRaw from "@/data/cars.json";
-import vehicleTypesRaw from "@/data/vehicleTypes.json";
-import type { Car, VehicleTypeItem, Transmission } from "@/types/car";
-import { COLORS } from "@/theme/ui";
-
-const PREFS_KEY = "zipo.search.prefs.v1";
-
-const DEFAULT_FILTERS: FilterState = {
-  minPrice: 0,
-  maxPrice: 250,
-  seats: null,
-  transmission: "Any",
-};
-
-type SearchPrefs = {
-  query: string;
-  selectedType: string; // "all" or type id
-  filters: FilterState;
-
-  // (optional) saved criteria from Home for later backend
-  location?: string;
-  pickupAtISO?: string;
-  days?: number;
-};
-
-const DEFAULT_PREFS: SearchPrefs = {
-  query: "",
-  selectedType: "all",
-  filters: DEFAULT_FILTERS,
-};
-
-function normalizeTransmission(t?: Transmission): Transmission {
-  return t === "Manual" ? "Manual" : "Automatic";
+function useDebounced<T>(value: T, delayMs: number) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delayMs);
+    return () => clearTimeout(t);
+  }, [value, delayMs]);
+  return v;
 }
 
-export default function SearchTab() {
-  const params = useLocalSearchParams<{
-    location?: string;
-    pickupAt?: string;
-    days?: string;
-    type?: string;
-  }>();
+export default function SearchScreen() {
+  const dispatch = useAppDispatch();
+  const tabBarHeight = useBottomTabBarHeight();
 
-  const cars = carsRaw as Car[];
-  const types = vehicleTypesRaw as VehicleTypeItem[];
+  const items = useAppSelector(selectCars);
+  const status = useAppSelector(selectCarsStatus);
+  const page = useAppSelector(selectCarsPage);
 
-  const [query, setQuery] = useState("");
-  const [selectedType, setSelectedType] = useState<string>("all");
+  const isLoading = status === "loading";
 
-  const [favs, setFavs] = useState<Record<string, boolean>>({});
+  const [city, setCity] = useState("");
+  const [q, setQ] = useState("");
 
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [filtersDraft, setFiltersDraft] =
-    useState<FilterState>(DEFAULT_FILTERS);
-  const [filtersApplied, setFiltersApplied] =
-    useState<FilterState>(DEFAULT_FILTERS);
+  // optional chips (we’ll wire real filter modal later)
+  const [sort, setSort] = useState<"popular" | "newest">("popular");
 
-  // 1) Load persisted prefs once
-  useEffect(() => {
-    (async () => {
-      const saved = await loadJSON<SearchPrefs>(PREFS_KEY, DEFAULT_PREFS);
-      setQuery(saved.query);
-      setSelectedType(saved.selectedType);
-      setFiltersApplied(saved.filters);
-      setFiltersDraft(saved.filters);
-    })();
-  }, []);
+  const debouncedCity = useDebounced(city.trim(), 350);
+  const debouncedQ = useDebounced(q.trim(), 350);
 
-  // 2) If navigated from Home with params, apply them once they exist
-  useEffect(() => {
-    const incomingLocation = (params?.location ?? "").toString();
-    const incomingType = (params?.type ?? "").toString();
-    const incomingPickupAt = (params?.pickupAt ?? "").toString();
-    const incomingDays = params?.days ? Number(params.days) : undefined;
+  const lastQueryKey = useRef<string>("");
 
-    const hasAny =
-      !!incomingLocation ||
-      !!incomingType ||
-      !!incomingPickupAt ||
-      typeof incomingDays === "number";
+  const runSearch = useCallback(
+    async (opts?: { reset?: boolean }) => {
+      const reset = opts?.reset ?? true;
 
-    if (!hasAny) return;
+      const queryKey = JSON.stringify({
+        city: debouncedCity,
+        q: debouncedQ,
+        sort,
+      });
 
-    // Apply: location -> query (simple now), type -> selectedType
-    if (incomingLocation) setQuery(incomingLocation);
+      // avoid spam when debounced values are same
+      if (queryKey === lastQueryKey.current && !reset) return;
+      lastQueryKey.current = queryKey;
 
-    if (incomingType && incomingType !== "all") {
-      const valid = types.some((t) => t.id === incomingType);
-      if (valid) setSelectedType(incomingType);
-    } else if (incomingType === "all") {
-      setSelectedType("all");
-    }
-
-    // Persist the incoming criteria for later backend usage
-    (async () => {
-      const current = await loadJSON<SearchPrefs>(PREFS_KEY, DEFAULT_PREFS);
-      const next: SearchPrefs = {
-        ...current,
-        query: incomingLocation ? incomingLocation : current.query,
-        selectedType:
-          incomingType && types.some((t) => t.id === incomingType)
-            ? incomingType
-            : incomingType === "all"
-            ? "all"
-            : current.selectedType,
-        location: incomingLocation || current.location,
-        pickupAtISO: incomingPickupAt || current.pickupAtISO,
-        days:
-          typeof incomingDays === "number" && !Number.isNaN(incomingDays)
-            ? incomingDays
-            : current.days,
-      };
-      await saveJSON(PREFS_KEY, next);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params?.location, params?.type, params?.pickupAt, params?.days, types]);
-
-  // 3) Persist query + selectedType + filtersApplied (debounced)
-  useEffect(() => {
-    const id = setTimeout(() => {
-      const next: SearchPrefs = {
-        query,
-        selectedType,
-        filters: filtersApplied,
-      };
-      saveJSON(PREFS_KEY, next);
-    }, 250);
-
-    return () => clearTimeout(id);
-  }, [query, selectedType, filtersApplied]);
-
-  const activeFilterCount = useMemo(() => {
-    let n = 0;
-    if (filtersApplied.minPrice !== DEFAULT_FILTERS.minPrice) n++;
-    if (filtersApplied.maxPrice !== DEFAULT_FILTERS.maxPrice) n++;
-    if (filtersApplied.seats !== DEFAULT_FILTERS.seats) n++;
-    if (filtersApplied.transmission !== DEFAULT_FILTERS.transmission) n++;
-    if (selectedType !== "all") n++;
-    return n;
-  }, [filtersApplied, selectedType]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-
-    return cars.filter((c) => {
-      const matchesQuery = !q
-        ? true
-        : `${c.brand} ${c.name} ${c.location}`.toLowerCase().includes(q);
-
-      const matchesType =
-        selectedType === "all"
-          ? true
-          : c.vehicleType
-          ? c.vehicleType === selectedType
-          : true;
-
-      const matchesPrice =
-        c.pricePerDay >= filtersApplied.minPrice &&
-        c.pricePerDay <= filtersApplied.maxPrice;
-
-      const matchesSeats =
-        filtersApplied.seats === null ? true : c.seats === filtersApplied.seats;
-
-      const carTransmission = normalizeTransmission(c.transmission);
-      const matchesTransmission =
-        filtersApplied.transmission === "Any"
-          ? true
-          : carTransmission === filtersApplied.transmission;
-
-      return (
-        matchesQuery &&
-        matchesType &&
-        matchesPrice &&
-        matchesSeats &&
-        matchesTransmission
+      await dispatch(
+        fetchCars({
+          city: debouncedCity || "",
+          q: debouncedQ || "",
+          sort,
+          status: "active",
+          hasImage: "true",
+          limit: 30,
+          offset: reset ? 0 : page.offset + page.limit,
+        })
       );
-    });
-  }, [cars, query, selectedType, filtersApplied]);
+    },
+    [dispatch, debouncedCity, debouncedQ, sort, page.offset, page.limit]
+  );
 
-  const popular = useMemo(() => cars.filter((c) => c.isPopular), [cars]);
+  // initial load
+  useEffect(() => {
+    dispatch(
+      fetchCars({
+        status: "active",
+        hasImage: "true",
+        sort: "popular",
+        limit: 30,
+        offset: 0,
+      })
+    );
+  }, [dispatch]);
 
-  return (
-    <SafeAreaView style={styles.safe}>
-      <AppHeader title="Zipo" notificationCount={2} />
+  // auto-search when inputs change
+  useEffect(() => {
+    runSearch({ reset: true });
+  }, [debouncedCity, debouncedQ, sort, runSearch]);
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.pad}>
-          <SearchInput
-            value={query}
-            onChangeText={setQuery}
-            filterBadgeCount={activeFilterCount}
-            onPressFilter={() => {
-              setFiltersDraft(filtersApplied);
-              setFilterOpen(true);
-            }}
-          />
-        </View>
-
-        {/* Vehicle type chips */}
-        <View style={{ marginTop: 14 }}>
-          <FlatList
-            data={[{ id: "all", label: "All" } as any, ...types]}
-            keyExtractor={(i: any) => i.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.typeRow}
-            renderItem={({ item }: any) => {
-              const id = item.id as string;
-              const selected = id === selectedType;
-
-              const left =
-                id === "all" ? (
-                  <Feather
-                    name="grid"
-                    size={14}
-                    color={selected ? "#fff" : COLORS.text}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.iconDot,
-                      selected ? styles.iconDotSelected : styles.iconDotDefault,
-                    ]}
-                  >
-                    <Feather
-                      name="circle"
-                      size={10}
-                      color={selected ? "#fff" : COLORS.text}
-                    />
-                  </View>
-                );
-
-              return (
-                <BrandChip
-                  label={item.label}
-                  selected={selected}
-                  left={left}
-                  onPress={() => setSelectedType(id)}
-                />
-              );
-            }}
-          />
-        </View>
-
-        {/* Recommended */}
-        <View style={[styles.pad, { marginTop: 16 }]}>
-          <SectionHeader
-            title="Recommend For You"
-            actionText="View All"
-            onPressAction={() => {}}
-          />
-          <View style={styles.grid}>
-            {filtered.slice(0, 4).map((car) => (
-              <CarGridCard
-                key={car.id}
-                car={car}
-                isFav={!!favs[car.id]}
-                onPressFav={() =>
-                  setFavs((p) => ({ ...p, [car.id]: !p[car.id] }))
-                }
-                onPressBook={() => {}}
-              />
-            ))}
+  const header = useMemo(() => {
+    return (
+      <View style={styles.headerWrap}>
+        {/* Top bar (kept simple here) */}
+        <View style={styles.topRow}>
+          <Text style={styles.brand}>Zipo</Text>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Pressable style={[styles.iconBtn, SHADOW_CARD]}>
+              <Feather name="bell" size={18} color={COLORS.text} />
+              <View style={styles.badgeDot}>
+                <Text style={styles.badgeText}>2</Text>
+              </View>
+            </Pressable>
+            <Pressable style={[styles.avatar, SHADOW_CARD]}>
+              <Text style={styles.avatarText}>VK</Text>
+            </Pressable>
           </View>
         </View>
 
-        {/* Popular */}
-        <View style={[styles.pad, { marginTop: 18 }]}>
-          <SectionHeader
-            title="Our Popular Cars"
-            actionText="View All"
-            onPressAction={() => {}}
+        {/* City field */}
+        <View style={styles.cityRow}>
+          <Feather name="map-pin" size={16} color={COLORS.muted} />
+          <TextInput
+            value={city}
+            onChangeText={setCity}
+            placeholder="City (e.g., Calgary)"
+            placeholderTextColor="#9CA3AF"
+            style={styles.cityInput}
+            returnKeyType="search"
+          />
+          {city.length ? (
+            <Pressable onPress={() => setCity("")} style={styles.clearBtn}>
+              <Feather name="x" size={16} color={COLORS.text} />
+            </Pressable>
+          ) : null}
+        </View>
+
+        {/* Keyword search */}
+        <View style={{ marginTop: 12 }}>
+          <SearchInput
+            value={q}
+            onChangeText={setQ}
+            placeholder="Search make, model, or car name…"
+            onPressFilter={() => {
+              // we’ll connect AnimatedFilterModal later
+              // for now just toggle popular/newest quickly
+              setSort((s) => (s === "popular" ? "newest" : "popular"));
+            }}
+            filterBadgeCount={0}
           />
         </View>
 
-        <View style={{ marginTop: 10 }}>
-          <FlatList
-            data={popular}
-            keyExtractor={(i) => i.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.popularRow}
-            renderItem={({ item }) => (
-              <PopularMiniCard car={item} onPress={() => {}} />
-            )}
-          />
+        {/* quick filter chips row (visual only for now) */}
+        <View style={styles.chipsRow}>
+          <View style={styles.chip}>
+            <Text style={styles.chipText}>Price</Text>
+            <Feather name="chevron-down" size={16} color={COLORS.muted} />
+          </View>
+          <View style={styles.chip}>
+            <Text style={styles.chipText}>Vehicle type</Text>
+            <Feather name="chevron-down" size={16} color={COLORS.muted} />
+          </View>
+          <View style={styles.chip}>
+            <Text style={styles.chipText}>Make & model</Text>
+            <Feather name="chevron-down" size={16} color={COLORS.muted} />
+          </View>
         </View>
-      </ScrollView>
 
-      <AnimatedFilterModal
-        visible={filterOpen}
-        onClose={() => setFilterOpen(false)}
-        value={filtersDraft}
-        onChange={setFiltersDraft}
-        onReset={() => setFiltersDraft(DEFAULT_FILTERS)}
-        onApply={() => {
-          setFiltersApplied(filtersDraft);
-          setFilterOpen(false);
+        <Text style={styles.resultsTitle}>
+          {items.length ? `${items.length}+ cars available` : "No cars found"}
+        </Text>
+        <Text style={styles.resultsSub}>
+          {debouncedCity
+            ? `Showing cars in ${debouncedCity}`
+            : "Showing all available cars"}
+          {debouncedQ ? ` • matching “${debouncedQ}”` : ""}
+        </Text>
+      </View>
+    );
+  }, [city, q, items.length, debouncedCity, debouncedQ]);
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      <FlatList
+        data={items}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => <CarListCard car={item} />}
+        ListHeaderComponent={header}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingBottom: tabBarHeight + 24,
+        }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isLoading}
+            onRefresh={() => runSearch({ reset: true })}
+          />
+        }
+        onEndReachedThreshold={0.6}
+        onEndReached={() => {
+          // optional pagination later; your backend supports offset/limit
+          // runSearch({ reset: false });
         }}
       />
     </SafeAreaView>
@@ -329,27 +217,105 @@ export default function SearchTab() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 110 },
-  pad: { paddingHorizontal: 20, paddingTop: 12 },
+  safe: { flex: 1, backgroundColor: "#F6F7FB" },
 
-  typeRow: { paddingHorizontal: 20, gap: 10 },
-  grid: {
-    marginTop: 12,
+  headerWrap: { paddingTop: 8, paddingBottom: 10 },
+
+  // Top header
+  topRow: {
+    paddingTop: 8, // adds margin below notch/time
     flexDirection: "row",
-    flexWrap: "wrap",
+    alignItems: "center",
     justifyContent: "space-between",
-    rowGap: 14,
   },
-  popularRow: { paddingHorizontal: 20 },
+  brand: { fontSize: 28, fontWeight: "900", color: COLORS.text },
 
-  iconDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 999,
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  iconDotDefault: { backgroundColor: "rgba(0,0,0,0.05)" },
-  iconDotSelected: { backgroundColor: "rgba(255,255,255,0.15)" },
+  badgeDot: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: COLORS.black,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.7)",
+  },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
+
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
+
+  // City input row
+  cityRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.xl,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  cityInput: { flex: 1, fontSize: 14, color: COLORS.text, paddingVertical: 0 },
+  clearBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Chips
+  chipsRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  chipText: { fontSize: 12, fontWeight: "800", color: COLORS.text },
+
+  resultsTitle: {
+    marginTop: 16,
+    fontSize: 18,
+    fontWeight: "900",
+    color: COLORS.text,
+  },
+  resultsSub: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+  },
 });
