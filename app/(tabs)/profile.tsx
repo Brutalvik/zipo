@@ -346,9 +346,11 @@ export default function ProfileScreen() {
               </View>
 
               <View style={styles.identityCol}>
-                <Text style={styles.profileName} numberOfLines={1}>
-                  {displayName}
-                </Text>
+                <TouchableOpacity activeOpacity={0.8}>
+                  <Text style={styles.profileName} numberOfLines={1}>
+                    {displayName}
+                  </Text>
+                </TouchableOpacity>
 
                 {!!displayEmail && (
                   <Text style={styles.profileEmail} numberOfLines={1}>
@@ -479,7 +481,11 @@ export default function ProfileScreen() {
               </View>
             ) : null}
 
-            <TouchableOpacity activeOpacity={0.9} style={styles.editRow}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.editRow}
+              onPress={() => router.push("/profile-details")}
+            >
               <Text style={styles.editRowText}>Edit profile</Text>
               <Feather
                 name="chevron-right"

@@ -28,6 +28,7 @@ import {
 } from "firebase/auth";
 import { FirebaseRecaptchaVerifierModal } from "expo-firebase-recaptcha";
 import Constants from "expo-constants";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import {
   setPhoneRemindLater,
@@ -37,14 +38,13 @@ import {
   phoneVerifySuccess,
 } from "@/lib/phoneGate";
 
-// ✅ Redux update (so Profile updates immediately after syncing)
 import { useAppDispatch } from "@/redux/hooks";
 import { updateUser } from "@/redux/slices/authSlice";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
-if (!API_BASE) {
-  throw new Error("EXPO_PUBLIC_API_BASE is not set");
-}
+if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
+
+const PENDING_PHONE_KEY = "zipo_pending_phone_e164";
 
 const ZIPO_COLORS = {
   primary: "#111827",
@@ -110,6 +110,17 @@ function formatCountdown(ms: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+// best-effort parse +CCXXXXXXXX into country + local
+function parseE164(e164: string): { country: Country; local: string } | null {
+  if (!e164 || !e164.startsWith("+")) return null;
+  const match = COUNTRIES.slice()
+    .sort((a, b) => b.dialCode.length - a.dialCode.length)
+    .find((c) => e164.startsWith(c.dialCode));
+  if (!match) return null;
+  const local = e164.slice(match.dialCode.length).replace(/\D/g, "");
+  return { country: match, local };
+}
+
 export default function VerifyPhoneScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
@@ -118,7 +129,7 @@ export default function VerifyPhoneScreen() {
   const nextRoute = params?.next ? String(params.next) : "/(tabs)/profile";
   const from = params?.from ? String(params.from) : "unknown";
 
-  const [selectedCountry, setSelectedCountry] = useState<Country>(COUNTRIES[1]); // default ID
+  const [selectedCountry, setSelectedCountry] = useState<Country>(COUNTRIES[1]);
   const [rawPhone, setRawPhone] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownAnim = useRef(new Animated.Value(0)).current;
@@ -137,37 +148,18 @@ export default function VerifyPhoneScreen() {
 
   const codeInputRef = useRef<TextInput | null>(null);
 
-  // -----------------------------------------
-  // ✅ Helper: backend sync (Firebase token -> DB)
-  // -----------------------------------------
+  // ✅ sync Firebase -> DB using /phone/sync (no client payload)
   const syncPhoneFromFirebaseToDb = async () => {
     const current = auth.currentUser;
     if (!current) throw new Error("Not signed in");
 
     await current.reload();
-
     const idToken = await current.getIdToken(true);
     if (!idToken) throw new Error("Missing auth token");
 
-    // ✅ Firebase truth:
-    const phone = current.phoneNumber; // string | null
-    const phoneVerified = !!phone;
-
-    if (!phone) {
-      // nothing to sync
-      return;
-    }
-
-    const res = await fetch(`${API_BASE}/api/users/phone`, {
+    const res = await fetch(`${API_BASE}/api/users/phone/sync`, {
       method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${idToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        phone_e164: phone, // already E.164
-        phone_verified: phoneVerified,
-      }),
+      headers: { Authorization: `Bearer ${idToken}` },
     });
 
     const text = await res.text();
@@ -175,37 +167,46 @@ export default function VerifyPhoneScreen() {
 
     const json = JSON.parse(text);
     if (json?.user) dispatch(updateUser(json.user));
+
+    // clear pending phone
+    await AsyncStorage.removeItem(PENDING_PHONE_KEY);
   };
 
-  // -----------------------------------------
-  // ✅ On screen entry: if Firebase already has phoneNumber -> sync + leave
-  // -----------------------------------------
+  // ✅ Prefill from pending phone if present
+  useEffect(() => {
+    (async () => {
+      const pending = await AsyncStorage.getItem(PENDING_PHONE_KEY);
+      if (!pending) return;
+
+      const parsed = parseE164(pending);
+      if (!parsed) return;
+
+      setSelectedCountry(parsed.country);
+      setRawPhone(parsed.local);
+    })();
+  }, []);
+
+  // ✅ On entry: if Firebase already has phone -> sync + leave
   useEffect(() => {
     (async () => {
       const user = auth.currentUser;
       if (!user) return;
 
-      // Ensure auth is fresh
       try {
         await user.reload();
-      } catch {
-        // ignore
-      }
+      } catch {}
 
-      // Firebase sets currentUser.phoneNumber when phone is linked/verified
       if (user.phoneNumber) {
         try {
           await syncPhoneFromFirebaseToDb();
           Alert.alert("Phone verified", "Your phone is already verified.");
         } catch (e: any) {
           console.warn("phone sync on enter failed", e?.message || e);
-          // Even if sync fails, still exit verify screen (optional)
           Alert.alert(
             "Phone verified",
             "Your phone is verified, but we couldn’t sync it to the server yet."
           );
         } finally {
-          // Go back to profile / next route
           router.replace(nextRoute);
         }
       }
@@ -213,9 +214,6 @@ export default function VerifyPhoneScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // -----------------------------------------
-  // Reminder cooldown ticker
-  // -----------------------------------------
   useEffect(() => {
     let t: any;
 
@@ -250,9 +248,6 @@ export default function VerifyPhoneScreen() {
   const toggleDropdown = () =>
     dropdownOpen ? closeDropdown() : openDropdown();
 
-  // -----------------------------------------
-  // Send OTP
-  // -----------------------------------------
   const handleSendCode = async () => {
     const user = auth.currentUser;
     if (!user) {
@@ -261,7 +256,6 @@ export default function VerifyPhoneScreen() {
       return;
     }
 
-    // If user already has phoneNumber (verified), don’t allow sending OTP again
     if (user.phoneNumber) {
       try {
         await syncPhoneFromFirebaseToDb();
@@ -286,6 +280,7 @@ export default function VerifyPhoneScreen() {
 
     try {
       setIsSending(true);
+
       const provider = new PhoneAuthProvider(auth);
       const id = await provider.verifyPhoneNumber(
         e164,
@@ -297,10 +292,7 @@ export default function VerifyPhoneScreen() {
       setStep("code");
       setVerificationCode("");
 
-      Alert.alert(
-        "Code sent",
-        `We’ve sent an SMS with a 6-digit code to ${masked}.`
-      );
+      Alert.alert("Code sent", `We’ve sent an SMS code to ${masked}.`);
     } catch (error: any) {
       console.warn("Phone verify send error:", error);
       Alert.alert("Error", error?.message || "We couldn't send the SMS.");
@@ -309,9 +301,6 @@ export default function VerifyPhoneScreen() {
     }
   };
 
-  // -----------------------------------------
-  // Confirm OTP
-  // -----------------------------------------
   const handleVerifyCode = async () => {
     const user = auth.currentUser;
     if (!user || !verificationId) {
@@ -335,7 +324,6 @@ export default function VerifyPhoneScreen() {
         verificationCode
       );
 
-      // ✅ Fix: if phone provider already linked, update instead of link
       const hasPhoneProvider = (user.providerData ?? []).some(
         (p: any) => p?.providerId === "phone"
       );
@@ -346,10 +334,9 @@ export default function VerifyPhoneScreen() {
         await linkWithCredential(user, credential);
       }
 
-      await user.reload(); // refresh user.phoneNumber
+      await user.reload();
       await phoneVerifySuccess();
 
-      // ✅ sync Firebase -> DB so profile updates
       try {
         await syncPhoneFromFirebaseToDb();
       } catch (e: any) {
@@ -362,7 +349,6 @@ export default function VerifyPhoneScreen() {
       await phoneVerifyFailed(error?.message);
       console.warn("Phone verify confirm error:", error);
 
-      // Optional nicer message
       const msg =
         error?.code === "auth/provider-already-linked"
           ? "This account already has a phone linked."
@@ -400,7 +386,6 @@ export default function VerifyPhoneScreen() {
     .padEnd(CODE_LENGTH, " ")
     .split("")
     .slice(0, CODE_LENGTH);
-
   const remindActive = cooldownMs > 0;
 
   return (
@@ -542,7 +527,6 @@ export default function VerifyPhoneScreen() {
                         isLoading={isSending}
                       />
 
-                      {/* ✅ Remove remind later if reminder is active */}
                       {!remindActive ? (
                         <TouchableOpacity
                           onPress={handleRemindLater}
@@ -632,7 +616,6 @@ export default function VerifyPhoneScreen() {
                         </Text>
                       </TouchableOpacity>
 
-                      {/* ✅ Remove remind later if reminder is active */}
                       {!remindActive ? (
                         <TouchableOpacity
                           onPress={handleRemindLater}
@@ -679,7 +662,6 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     justifyContent: "space-between",
   },
-
   headerRow: { flexDirection: "row", alignItems: "center" },
   logoContainer: {
     width: 32,
@@ -695,7 +677,6 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     color: ZIPO_COLORS.black,
   },
-
   content: { marginTop: 28 },
   title: {
     fontSize: 24,

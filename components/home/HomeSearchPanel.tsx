@@ -12,7 +12,7 @@ import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
-import DaysPickerModal from "@/components/home/DaysPickerModal";
+import DaysPickerModal from "@/components/DaysPickerModal";
 import { addDays, formatDateTime } from "@/lib/date";
 
 export type HomeSearchState = {
@@ -193,7 +193,7 @@ export default function HomeSearchPanel({
         value={value.days}
         maxDays={30}
         onClose={() => setDaysOpen(false)}
-        onSelect={(d) => onChange({ ...value, days: d })}
+        onSelect={(d: any) => onChange({ ...value, days: d })}
       />
     </View>
   );

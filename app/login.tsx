@@ -33,6 +33,37 @@ if (!API_BASE) {
   throw new Error("EXPO_PUBLIC_API_BASE is not set");
 }
 
+function getFriendlyAuthError(error: any): string {
+  const code = error?.code ?? "";
+
+  switch (code) {
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+      return "Incorrect email or password.";
+
+    case "auth/user-not-found":
+      return "No account found with this email.";
+
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+
+    case "auth/user-disabled":
+      return "This account has been disabled. Contact support.";
+
+    case "auth/too-many-requests":
+      return "Too many failed attempts. Please try again later.";
+
+    case "auth/network-request-failed":
+      return "Network error. Please check your connection and try again.";
+
+    case "auth/email-not-verified":
+      return "Please verify your email address before logging in.";
+
+    default:
+      return "Login failed. Please check your details and try again.";
+  }
+}
+
 export default function LoginScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
@@ -107,10 +138,8 @@ export default function LoginScreen() {
       router.replace("/(app)");
     } catch (error: any) {
       console.warn("Login error:", error);
-      Alert.alert(
-        "Login Failed",
-        error?.message || "Login failed. Please check your credentials."
-      );
+      const friendlyMessage = getFriendlyAuthError(error);
+      Alert.alert("Login failed", friendlyMessage);
     } finally {
       setIsLoading(false);
     }
