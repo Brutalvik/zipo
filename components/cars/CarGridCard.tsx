@@ -1,7 +1,7 @@
 import React from "react";
 import { Image, Pressable, Text, View, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import type { Car } from "@/types/cars";
+import type { Car } from "@/types/car";
 import { formatPricePerDay } from "@/lib/format";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
@@ -31,6 +31,9 @@ export default function CarGridCard({
           source={{ uri: car.imageUrl }}
           style={styles.image}
           resizeMode="cover"
+          onError={(e) =>
+            console.log("IMG ERROR", car.id, car.imageUrl, e.nativeEvent)
+          }
         />
 
         <Pressable
@@ -48,7 +51,7 @@ export default function CarGridCard({
       </View>
 
       <Text style={styles.name} numberOfLines={1}>
-        {car.name}
+        {car.title}
       </Text>
 
       <View style={styles.ratingRow}>

@@ -1,7 +1,7 @@
 import React from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import type { Car } from "@/types/cars";
+import type { Car } from "@/types/car";
 import { formatPricePerDay } from "@/lib/format";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
@@ -46,7 +46,7 @@ export default function BestCarCard({
 
       <View style={styles.body}>
         <Text style={styles.name} numberOfLines={1}>
-          {car.name}
+          {car.title}
         </Text>
 
         <View style={styles.ratingRow}>

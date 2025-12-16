@@ -23,7 +23,7 @@ import { loadJSON, saveJSON } from "@/lib/persist";
 
 import carsRaw from "@/data/cars.json";
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
-import type { Car, VehicleTypeItem, Transmission } from "@/types/cars";
+import type { Car, VehicleTypeItem, Transmission } from "@/types/car";
 import { COLORS } from "@/theme/ui";
 
 const PREFS_KEY = "zipo.search.prefs.v1";

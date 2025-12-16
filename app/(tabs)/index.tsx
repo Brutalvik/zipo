@@ -1,265 +1,202 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { FlatList, RefreshControl, StyleSheet, Text, View } from "react-native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import {
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  View,
-  FlatList,
-  Text,
-} from "react-native";
-import { useRouter } from "expo-router";
+  fetchCars,
+  fetchFeaturedCars,
+  fetchPopularCars,
+  selectCars,
+  selectFeaturedCars,
+  selectPopularCars,
+  selectCarsStatus,
+  selectFeaturedStatus,
+  selectPopularStatus,
+} from "@/redux/slices/carSlice";
 
 import AppHeader from "@/components/common/AppHeader";
 import SectionHeader from "@/components/cars/SectionHeader";
-import BestCarCard from "@/components/home/BestCarCard";
-import NearbyHeroCard from "@/components/home/NearbyHeroCard";
-import TypePill from "@/components/home/TypePill";
 import HomeSearchPanel, {
   HomeSearchState,
 } from "@/components/home/HomeSearchPanel";
+import TypePill from "@/components/home/TypePill";
+import BestCarCard from "@/components/home/BestCarCard";
+import NearbyHeroCard from "@/components/home/NearbyHeroCard";
+import CarGridCard from "@/components/cars/CarGridCard";
 
-import vehicleTypesRaw from "@/data/vehicleTypes.json";
-import carsRaw from "@/data/cars.json";
-import type { Car } from "@/types/cars";
-import { COLORS } from "@/theme/ui";
+import vehicleTypesRaw from "@/data/vehicleTypes.json"; // adjust if needed
 
-import { loadJSON, saveJSON } from "@/lib/persist";
+export default function HomeScreen() {
+  const dispatch = useAppDispatch();
+  const tabBarHeight = useBottomTabBarHeight();
 
-type VehicleTypeItem = { id: string; label: string };
+  const featured = useAppSelector(selectFeaturedCars);
+  const popular = useAppSelector(selectPopularCars);
+  const cars = useAppSelector(selectCars);
 
-const HOME_PREFS_KEY = "zipo.home.prefs.v1";
+  const statusList = useAppSelector(selectCarsStatus);
+  const statusFeatured = useAppSelector(selectFeaturedStatus);
+  const statusPopular = useAppSelector(selectPopularStatus);
 
-type HomePrefs = {
-  criteria: { location: string; pickupAtISO: string; days: number };
-  selectedType: string; // "all" or type id
-};
+  const isLoading =
+    statusList === "loading" ||
+    statusFeatured === "loading" ||
+    statusPopular === "loading";
 
-const DEFAULT_PREFS: HomePrefs = {
-  criteria: { location: "", pickupAtISO: new Date().toISOString(), days: 3 },
-  selectedType: "all",
-};
+  const [selectedType, setSelectedType] = useState<string>("All");
 
-export default function HomeTab() {
-  const router = useRouter();
-  const cars = carsRaw as Car[];
-  const types = vehicleTypesRaw as VehicleTypeItem[];
-
-  const [favs, setFavs] = useState<Record<string, boolean>>({});
-  const [selectedType, setSelectedType] = useState<string>("all");
-
-  const [criteria, setCriteria] = useState<HomeSearchState>({
+  const [search, setSearch] = useState<HomeSearchState>({
     location: "",
     pickupAt: new Date(),
     days: 3,
   });
 
-  // Load persisted home state once
-  useEffect(() => {
-    (async () => {
-      const saved = await loadJSON<HomePrefs>(HOME_PREFS_KEY, DEFAULT_PREFS);
-      setSelectedType(saved.selectedType ?? "all");
-      setCriteria({
-        location: saved.criteria?.location ?? "",
-        pickupAt: saved.criteria?.pickupAtISO
-          ? new Date(saved.criteria.pickupAtISO)
-          : new Date(),
-        days: Math.min(30, Math.max(1, saved.criteria?.days ?? 3)),
-      });
-    })();
+  const vehicleTypes: string[] = useMemo(() => {
+    const base = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : [];
+    // expecting array of strings or objects; handle both
+    const labels = base
+      .map((x: any) => (typeof x === "string" ? x : x?.label))
+      .filter(Boolean);
+    return ["All", ...labels];
   }, []);
 
-  // Persist home state (debounced)
+  const load = useCallback(async () => {
+    await Promise.all([
+      dispatch(fetchFeaturedCars(10)),
+      dispatch(fetchPopularCars(10)),
+      dispatch(fetchCars({ limit: 20 })),
+    ]);
+  }, [dispatch]);
+
   useEffect(() => {
-    const id = setTimeout(() => {
-      const next: HomePrefs = {
-        selectedType,
-        criteria: {
-          location: criteria.location,
-          pickupAtISO: criteria.pickupAt.toISOString(),
-          days: criteria.days,
-        },
-      };
-      saveJSON(HOME_PREFS_KEY, next);
-    }, 250);
+    load();
+  }, [load]);
 
-    return () => clearTimeout(id);
-  }, [criteria.location, criteria.pickupAt, criteria.days, selectedType]);
+  // “Nearby” card: just pick the first featured as demo
+  const nearbyCar = featured[0] ?? popular[0] ?? cars[0] ?? null;
 
-  // ✅ First apply ONLY type filter (never "0 everything" unless truly none)
-  const typeFilteredCars = useMemo(() => {
-    return cars.filter((c) => {
-      if (selectedType === "all") return true;
-      return c.vehicleType ? c.vehicleType === selectedType : true;
-    });
-  }, [cars, selectedType]);
-
-  // ✅ Then apply location filter, but allow fallback to typeFilteredCars if no matches
-  const locationQuery = criteria.location.trim().toLowerCase();
-
-  const exactLocationMatches = useMemo(() => {
-    if (!locationQuery) return typeFilteredCars;
-
-    return typeFilteredCars.filter((c) => {
-      const loc = (c.location || "").toLowerCase();
-      return loc.includes(locationQuery);
-    });
-  }, [typeFilteredCars, locationQuery]);
-
-  const usingLocationFallback =
-    locationQuery.length > 0 && exactLocationMatches.length === 0;
-
-  const homeFilteredCars = usingLocationFallback
-    ? typeFilteredCars
-    : exactLocationMatches;
-
-  // ✅ Live count should represent what we’re showing
-  const resultCount = homeFilteredCars.length;
-
+  // Filtered “best cars” grid (demo)
   const bestCars = useMemo(() => {
-    return homeFilteredCars
-      .slice()
-      .sort(
-        (a, b) =>
-          b.rating +
-          (b.isPopular ? 0.2 : 0) -
-          (a.rating + (a.isPopular ? 0.2 : 0))
-      )
-      .slice(0, 6);
-  }, [homeFilteredCars]);
+    const list = cars.length ? cars : featured;
+    if (selectedType === "All") return list;
+    return list.filter(
+      (c) => (c.vehicleType ?? "").toLowerCase() === selectedType.toLowerCase()
+    );
+  }, [cars, featured, selectedType]);
 
-  const nearbyCar = useMemo<Car>(() => {
-    const pool = homeFilteredCars.length > 0 ? homeFilteredCars : cars;
-    return pool.find((c) => c.isPopular) ?? pool[0];
-  }, [homeFilteredCars, cars]);
-
-  const onPressSearch = () => {
-    router.push({
-      pathname: "/(tabs)/search",
-      params: {
-        location: criteria.location,
-        pickupAt: criteria.pickupAt.toISOString(),
-        days: String(criteria.days),
-        type: selectedType,
-      },
-    });
-  };
+  const onPressSearch = useCallback(() => {
+    // For now: treat location as q. Later you can map to city/country.
+    dispatch(
+      fetchCars({
+        q: search.location?.trim() || "",
+        type: selectedType === "All" ? "" : selectedType,
+        limit: 20,
+      })
+    );
+  }, [dispatch, search.location, selectedType]);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <AppHeader title="Zipo" notificationCount={2} />
+    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      <FlatList
+        data={bestCars}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        columnWrapperStyle={styles.gridRow}
+        renderItem={({ item }) => <CarGridCard car={item} />}
+        refreshControl={
+          <RefreshControl refreshing={isLoading} onRefresh={load} />
+        }
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <AppHeader />
 
-        <HomeSearchPanel
-          value={criteria}
-          onChange={setCriteria}
-          resultCount={resultCount}
-          onPressSearch={onPressSearch}
-        />
-
-        {/* ✅ small hint if we’re falling back */}
-        {usingLocationFallback ? (
-          <View style={[styles.pad, { paddingTop: 8 }]}>
-            <Text style={styles.fallbackText}>
-              No exact matches for “{criteria.location}” — showing all available
-              cars.
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Vehicle Types */}
-        <View style={[styles.pad, { marginTop: 14 }]}>
-          <Text style={styles.sectionTitle}>Vehicle types</Text>
-        </View>
-
-        <FlatList
-          data={[{ id: "all", label: "All" } as VehicleTypeItem, ...types]}
-          keyExtractor={(i) => i.id}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.typeRow}
-          renderItem={({ item }) => (
-            <TypePill
-              label={item.label}
-              selected={selectedType === item.id}
-              onPress={() =>
-                setSelectedType((prev) => (prev === item.id ? "all" : item.id))
-              }
+            <HomeSearchPanel
+              value={search}
+              onChange={setSearch}
+              resultCount={bestCars.length}
+              onPressSearch={onPressSearch}
             />
-          )}
-        />
 
-        {/* Best Cars */}
-        <View style={[styles.pad, { marginTop: 18 }]}>
-          <SectionHeader
-            title="Best Cars"
-            actionText="View All"
-            onPressAction={() => router.push("/(tabs)/search")}
-          />
-          <Text style={styles.subtle}>
-            {selectedType === "all" ? "Available" : `Filtered: ${selectedType}`}
-          </Text>
-        </View>
-
-        <FlatList
-          data={bestCars}
-          keyExtractor={(i) => i.id}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.bestRow}
-          renderItem={({ item }) => (
-            <BestCarCard
-              car={item}
-              isFav={!!favs[item.id]}
-              onPressFav={() =>
-                setFavs((p) => ({ ...p, [item.id]: !p[item.id] }))
-              }
-              onPress={() => {}}
-            />
-          )}
-          ListEmptyComponent={
-            <View style={{ paddingHorizontal: 20, paddingVertical: 12 }}>
-              <Text style={{ color: COLORS.muted, fontWeight: "700" }}>
-                No cars match your current filters.
-              </Text>
+            <View style={styles.sectionPad}>
+              <Text style={styles.h1}>Vehicle types</Text>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={vehicleTypes}
+                keyExtractor={(t) => t}
+                renderItem={({ item }) => (
+                  <TypePill
+                    label={item}
+                    selected={item === selectedType}
+                    onPress={() => setSelectedType(item)}
+                  />
+                )}
+              />
             </View>
-          }
-        />
 
-        {/* Nearby */}
-        <View style={[styles.pad, { marginTop: 18 }]}>
-          <SectionHeader
-            title="Nearby"
-            actionText="View All"
-            onPressAction={() => router.push("/(tabs)/search")}
-          />
-        </View>
+            <View style={styles.sectionPad}>
+              <SectionHeader
+                title="Best Cars"
+                actionText="View All"
+                onPressAction={() => {}}
+              />
+              <Text style={styles.subtle}>
+                {selectedType === "All"
+                  ? "Available"
+                  : `Filtered: ${selectedType}`}
+              </Text>
 
-        <View style={[styles.pad, { paddingTop: 10 }]}>
-          <NearbyHeroCard car={nearbyCar} onPress={() => {}} />
-        </View>
-      </ScrollView>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={popular}
+                keyExtractor={(c) => c.id}
+                renderItem={({ item }) => <BestCarCard car={item} />}
+                contentContainerStyle={{ paddingTop: 10, paddingBottom: 4 }}
+              />
+            </View>
+
+            <View style={styles.sectionPad}>
+              <SectionHeader
+                title="Nearby"
+                actionText="View All"
+                onPressAction={() => {}}
+              />
+              {nearbyCar ? (
+                <View style={{ marginTop: 10 }}>
+                  <NearbyHeroCard car={nearbyCar} />
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.sectionPad}>
+              <SectionHeader
+                title="Explore"
+                actionText="View All"
+                onPressAction={() => {}}
+              />
+              <Text style={styles.subtle}>Top picks for you</Text>
+            </View>
+          </View>
+        }
+        contentContainerStyle={{ paddingBottom: tabBarHeight + 28 }}
+        showsVerticalScrollIndicator={false}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
-  content: { paddingBottom: 110 },
-  pad: { paddingHorizontal: 20, paddingTop: 12 },
+  header: { paddingBottom: 6 },
+  sectionPad: { paddingHorizontal: 16, paddingTop: 16 },
 
-  sectionTitle: { fontSize: 14, fontWeight: "900", color: COLORS.text },
-  subtle: {
-    marginTop: 6,
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.muted,
+  h1: { fontSize: 18, fontWeight: "900", marginBottom: 12 },
+  subtle: { marginTop: 6, fontSize: 12, opacity: 0.6, fontWeight: "700" },
+
+  gridRow: {
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
-
-  typeRow: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8 },
-  bestRow: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 6 },
-
-  fallbackText: { fontSize: 12, fontWeight: "700", color: COLORS.muted },
 });

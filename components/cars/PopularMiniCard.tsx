@@ -1,6 +1,6 @@
 import React from "react";
 import { Image, Pressable, Text, View, StyleSheet } from "react-native";
-import type { Car } from "@/types/cars";
+import type { Car } from "@/types/car";
 import { formatPricePerDay } from "@/lib/format";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
@@ -24,7 +24,7 @@ export default function PopularMiniCard({
       />
       <View style={styles.meta}>
         <Text style={styles.name} numberOfLines={1}>
-          {car.name}
+          {car.title}
         </Text>
         <Text style={styles.price}>{formatPricePerDay(car.pricePerDay)}</Text>
       </View>
