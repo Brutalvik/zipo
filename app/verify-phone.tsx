@@ -40,6 +40,7 @@ import {
 
 import { useAppDispatch } from "@/redux/hooks";
 import { updateUser } from "@/redux/slices/authSlice";
+import { phoneVerificationFriendlyError } from "@/utils/authError";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -349,12 +350,8 @@ export default function VerifyPhoneScreen() {
       await phoneVerifyFailed(error?.message);
       console.warn("Phone verify confirm error:", error);
 
-      const msg =
-        error?.code === "auth/provider-already-linked"
-          ? "This account already has a phone linked."
-          : error?.message || "The code was invalid or expired.";
-
-      Alert.alert("Verification failed", msg);
+      const friendly = phoneVerificationFriendlyError(error);
+      Alert.alert(friendly.title, friendly.message);
     } finally {
       setIsVerifying(false);
     }

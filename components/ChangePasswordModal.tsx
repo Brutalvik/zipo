@@ -12,6 +12,7 @@ import Button from "@/components/Button/Button";
 import { auth } from "@/services/firebase";
 import { updatePassword } from "firebase/auth";
 import ReauthPasswordModal from "@/components/ReauthPasswordModal";
+import { friendlyPasswordAuthError } from "@/utils/authError";
 
 function isStrongPassword(pw: string) {
   // At least 8 chars, one upper, one number, one special
@@ -21,20 +22,6 @@ function isStrongPassword(pw: string) {
     /[0-9]/.test(pw) &&
     /[^A-Za-z0-9]/.test(pw)
   );
-}
-
-function friendlyAuthError(error: any) {
-  const code = error?.code ?? "";
-  switch (code) {
-    case "auth/requires-recent-login":
-      return "For security, please confirm your password to continue.";
-    case "auth/weak-password":
-      return "That password is too weak. Please choose a stronger one.";
-    case "auth/network-request-failed":
-      return "Network error. Please check your connection and try again.";
-    default:
-      return "We couldn’t update your password. Please try again.";
-  }
 }
 
 type Props = {
@@ -109,7 +96,7 @@ export default function ChangePasswordModal({ visible, onClose }: Props) {
         return;
       }
 
-      Alert.alert("Can’t update", friendlyAuthError(e));
+      Alert.alert("Can’t update", friendlyPasswordAuthError(e));
     } finally {
       setSaving(false);
     }

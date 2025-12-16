@@ -16,29 +16,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { auth } from "@/services/firebase";
 import { EmailAuthProvider, reauthenticateWithCredential } from "firebase/auth";
+import { friendlyAuthError } from "@/utils/authError";
 
 type Props = {
   visible: boolean;
   onClose: () => void;
   onSuccess: () => void | Promise<void>;
 };
-
-function friendlyAuthError(err: any) {
-  const code = err?.code ?? "";
-  switch (code) {
-    case "auth/wrong-password":
-    case "auth/invalid-credential":
-      return "That password doesn't look right. Please try again.";
-    case "auth/too-many-requests":
-      return "Too many attempts. Please wait a bit and try again.";
-    case "auth/network-request-failed":
-      return "Network error. Please check your connection and try again.";
-    default:
-      return (
-        err?.message || "Couldn't confirm your password. Please try again."
-      );
-  }
-}
 
 export default function ReauthPasswordModal({
   visible,
