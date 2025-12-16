@@ -31,9 +31,6 @@ export default function CarGridCard({
           source={{ uri: car.imageUrl }}
           style={styles.image}
           resizeMode="cover"
-          onError={(e) =>
-            console.log("IMG ERROR", car.id, car.imageUrl, e.nativeEvent)
-          }
         />
 
         <Pressable
