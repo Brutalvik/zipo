@@ -457,34 +457,80 @@ export default function ProfileDetailsScreen() {
         payload.phone_e164 = nextPhone;
       }
 
-      if (!dobLocked && form.date_of_birth_ymd) {
+      const dobWillBeSetFirstTime = !dobLocked && !!form.date_of_birth_ymd;
+
+      if (dobWillBeSetFirstTime) {
         payload.date_of_birth = form.date_of_birth_ymd;
       }
 
-      if (Object.keys(payload).length > 0) {
-        const updated = await patchMe(payload);
-        if (updated) dispatch(updateUser(updated));
-      }
+      // Commit helper so we can call it after the DOB confirmation dialog
+      const commitProfilePatch = async () => {
+        if (Object.keys(payload).length > 0) {
+          const updated = await patchMe(payload);
+          if (updated) dispatch(updateUser(updated));
+        }
 
-      if (phoneChanged) {
-        await AsyncStorage.setItem(PENDING_PHONE_KEY, nextPhone);
-        setIsSaving(false);
+        if (phoneChanged) {
+          await AsyncStorage.setItem(PENDING_PHONE_KEY, nextPhone);
+          setIsSaving(false);
+          setIsEditing(false);
+
+          Alert.alert(
+            "Verify your phone",
+            "We saved your new number. Please verify it to complete the update.",
+            [
+              {
+                text: "OK",
+                onPress: () => {
+                  router.push({
+                    pathname: "/verify-phone",
+                    params: {
+                      next: "/(tabs)/profile-details",
+                      from: "profile_details",
+                    },
+                  });
+                },
+              },
+            ]
+          );
+          return;
+        }
+        // Refresh and exit edit mode
+        await refreshMe();
         setIsEditing(false);
+        track("profile_details_save_success", {});
+        Alert.alert("Saved", "Your profile has been updated.");
+      };
 
+      //  One-time DOB warning + choice to go back or continue
+      if (dobWillBeSetFirstTime) {
         Alert.alert(
-          "Verify your phone",
-          "We saved your new number. Please verify it to complete the update.",
+          "Set date of birth?",
+          "You can set your date of birth only once. After saving, you won’t be able to change it.",
           [
             {
-              text: "OK",
+              text: "Go back",
+              style: "cancel",
               onPress: () => {
-                router.push({
-                  pathname: "/verify-phone",
-                  params: {
-                    next: "/(tabs)/profile-details",
-                    from: "profile_details",
-                  },
-                });
+                // let the user continue editing; don't save
+                setIsSaving(false);
+              },
+            },
+            {
+              text: "Continue",
+              style: "destructive",
+              onPress: async () => {
+                try {
+                  // continue the normal save flow
+                  await commitProfilePatch();
+                } catch (e: any) {
+                  console.warn("save failed", e?.message || e);
+                  const msg = apiFriendlyMessage(e?.message || e);
+                  track("profile_details_save_failed", { message: msg });
+                  Alert.alert("Can't save", firebaseFriendlyMessage(e) || msg);
+                } finally {
+                  setIsSaving(false);
+                }
               },
             },
           ]
@@ -492,12 +538,9 @@ export default function ProfileDetailsScreen() {
         return;
       }
 
-      // Refresh and exit edit mode
-      await refreshMe();
-      setIsEditing(false);
-      track("profile_details_save_success", {});
-
-      Alert.alert("Saved", "Your profile has been updated.");
+      // If DOB isn't being set for the first time, just commit normally
+      await commitProfilePatch();
+      return;
     } catch (e: any) {
       console.warn("save failed", e?.message || e);
 
