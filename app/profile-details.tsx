@@ -408,20 +408,18 @@ export default function ProfileDetailsScreen() {
       });
 
       // Handle email change
+      // Handle email change
       if (emailChanged) {
         const doEmailFlow = async () => {
           const u = auth.currentUser;
           if (!u) throw new Error("Not signed in");
 
-          // Force reload to ensure we have the latest state
           await u.reload();
           const freshUser = auth.currentUser;
           if (!freshUser) throw new Error("Could not refresh user state");
 
-          // Send verification to NEW email
           await verifyBeforeUpdateEmail(freshUser, nextEmail);
 
-          // Don't change isEditing or isSaving here - let the navigation handle it
           setIsSaving(false);
           setIsEditing(false);
 
@@ -445,26 +443,11 @@ export default function ProfileDetailsScreen() {
           );
         };
 
-        try {
-          await doEmailFlow();
-          return; // Stop here - user will be navigated to verify-email
-        } catch (e: any) {
-          console.log("Email change error:", {
-            code: e?.code,
-            message: e?.message,
-            name: e?.name,
-          });
-
-          const code = String(e?.code || "");
-          if (code.includes("requires-recent-login")) {
-            setPendingRetry(() => doEmailFlow);
-            setReauthOpen(true);
-            setIsSaving(false);
-            return;
-          }
-
-          throw e;
-        }
+        // ALWAYS require password confirmation for email changes
+        setPendingRetry(() => doEmailFlow);
+        setReauthOpen(true);
+        setIsSaving(false);
+        return;
       }
 
       // Handle phone/DOB changes

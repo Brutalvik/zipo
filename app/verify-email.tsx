@@ -108,10 +108,7 @@ export default function VerifyEmailScreen() {
 
       // Handle specific errors
       if (error?.code === "auth/requires-recent-login") {
-        Alert.alert(
-          "Session expired",
-          "For security, please go back and try again."
-        );
+        Alert.alert("Alert", "For security, please go back and try again.");
       } else {
         Alert.alert(
           "Error",
