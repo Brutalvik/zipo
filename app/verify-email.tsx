@@ -10,7 +10,7 @@ import { auth } from "@/services/firebase";
 import { verifyBeforeUpdateEmail } from "firebase/auth";
 
 import { useAppDispatch } from "@/redux/hooks";
-import { updateUser } from "@/redux/slices/authSlice";
+import { signOut, updateUser } from "@/redux/slices/authSlice";
 
 import { FirebaseError } from "firebase/app";
 import * as Updates from "expo-updates";
@@ -179,7 +179,7 @@ export default function VerifyEmailScreen() {
               text: "OK",
               onPress: async () => {
                 await auth.signOut();
-                await Updates.reloadAsync();
+                dispatch(signOut());
                 router.replace("/login");
               },
             },
@@ -208,6 +208,8 @@ export default function VerifyEmailScreen() {
           {
             text: "OK",
             onPress: async () => {
+              await auth.signOut();
+              dispatch(signOut());
               router.replace("/login");
             },
           },
@@ -221,6 +223,7 @@ export default function VerifyEmailScreen() {
         isAuthError("auth/user-not-found", error)
       ) {
         await auth.signOut();
+        dispatch(signOut());
         router.replace("/login");
         return;
       }

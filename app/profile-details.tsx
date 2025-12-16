@@ -449,12 +449,20 @@ export default function ProfileDetailsScreen() {
           await doEmailFlow();
           return; // Stop here - user will be navigated to verify-email
         } catch (e: any) {
-          if (e?.code === "auth/requires-recent-login") {
+          console.log("Email change error:", {
+            code: e?.code,
+            message: e?.message,
+            name: e?.name,
+          });
+
+          const code = String(e?.code || "");
+          if (code.includes("requires-recent-login")) {
             setPendingRetry(() => doEmailFlow);
             setReauthOpen(true);
             setIsSaving(false);
             return;
           }
+
           throw e;
         }
       }
@@ -610,16 +618,33 @@ export default function ProfileDetailsScreen() {
     }
   };
 
+  // const handleReauthSuccess = async () => {
+  //   try {
+  //     if (pendingRetry) {
+  //       const fn = pendingRetry;
+  //       setPendingRetry(null);
+  //       setReauthOpen(false);
+  //       await fn();
+  //     }
+  //   } catch (e: any) {
+  //     Alert.alert("Couldn't continue", firebaseFriendlyMessage(e));
+  //   }
+  // };
+
   const handleReauthSuccess = async () => {
+    const fn = pendingRetry;
+    setPendingRetry(null);
+    setReauthOpen(false);
+
+    if (!fn) return;
+
     try {
-      if (pendingRetry) {
-        const fn = pendingRetry;
-        setPendingRetry(null);
-        setReauthOpen(false);
-        await fn();
-      }
+      setIsSaving(true);
+      await fn();
     } catch (e: any) {
       Alert.alert("Couldn't continue", firebaseFriendlyMessage(e));
+    } finally {
+      setIsSaving(false);
     }
   };
 
