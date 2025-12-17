@@ -13,7 +13,7 @@ import DateTimePicker, {
 } from "@react-native-community/datetimepicker";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 import DaysPickerModal from "@/components/DaysPickerModal";
-import { addDays, formatDateTime } from "@/lib/date";
+import { addDays } from "@/lib/date";
 import AndroidDateTimeSheet from "@/components/home/AndroidDateTimeSheet";
 
 export type HomeSearchState = {
@@ -31,16 +31,29 @@ function mergeDateAndTime(datePart: Date, timePart: Date) {
   return merged;
 }
 
+function fmtPanelDateTime(d: Date) {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const MMM = d.toLocaleString("en-US", { month: "short" });
+  const yyyy = d.getFullYear();
+
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12;
+  if (h === 0) h = 12;
+
+  // Match your requested style: 17-Dec-2025 - 3:28 PM
+  return `${dd}-${MMM}-${yyyy} - ${h}:${m} ${ampm}`;
+}
+
 export default function HomeSearchPanel({
   value,
   onChange,
-  resultCount,
   onPressSearch,
   containerStyle,
 }: {
   value: HomeSearchState;
   onChange: (next: HomeSearchState) => void;
-  resultCount: number;
   onPressSearch: () => void;
   containerStyle?: any;
 }) {
@@ -49,6 +62,19 @@ export default function HomeSearchPanel({
 
   const [tempDate, setTempDate] = useState<Date>(value.pickupAt);
   const [tempTime, setTempTime] = useState<Date>(value.pickupAt);
+
+  // ✅ minimum pickup time = now + 2 hours
+  const minPickupAt = useMemo(() => {
+    const d = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    d.setSeconds(0);
+    d.setMilliseconds(0);
+    return d;
+  }, []);
+
+  const clampPickup = (d: Date) => {
+    if (d.getTime() < minPickupAt.getTime()) return new Date(minPickupAt);
+    return d;
+  };
 
   const dropoffAt = useMemo(
     () => addDays(value.pickupAt, value.days),
@@ -69,7 +95,7 @@ export default function HomeSearchPanel({
 
   const applyPicker = () => {
     const merged = mergeDateAndTime(tempDate, tempTime);
-    onChange({ ...value, pickupAt: merged });
+    onChange({ ...value, pickupAt: clampPickup(merged) });
     setPickerOpen(false);
   };
 
@@ -78,12 +104,11 @@ export default function HomeSearchPanel({
       setPickerOpen(false);
       return;
     }
-    if (selected) onChange({ ...value, pickupAt: selected });
+    if (selected) onChange({ ...value, pickupAt: clampPickup(selected) });
     setPickerOpen(false);
   };
 
   const city = value.location.trim() || "your area";
-  const prettyCount = resultCount === 1 ? "1 car" : `${resultCount} cars`;
 
   return (
     <View style={[styles.card, SHADOW_CARD, containerStyle]}>
@@ -103,7 +128,9 @@ export default function HomeSearchPanel({
 
       <Text style={[styles.label, { marginTop: 12 }]}>Pickup date & time</Text>
       <Pressable onPress={openPicker} style={styles.selectRow}>
-        <Text style={styles.selectText}>{formatDateTime(value.pickupAt)}</Text>
+        <Text style={styles.selectText}>
+          {fmtPanelDateTime(value.pickupAt)}
+        </Text>
         <Text style={styles.selectHint}>Change</Text>
       </Pressable>
 
@@ -117,29 +144,21 @@ export default function HomeSearchPanel({
 
       <View style={styles.preview}>
         <Text style={styles.previewLabel}>Dropoff</Text>
-        <Text style={styles.previewValue}>{formatDateTime(dropoffAt)}</Text>
-      </View>
-
-      {/* LIVE RESULT COUNT */}
-      <View style={styles.countRow}>
-        <View style={styles.countBadge}>
-          <Text style={styles.countBadgeText}>{prettyCount}</Text>
-        </View>
-        <Text style={styles.countText}>available in {city}</Text>
+        <Text style={styles.previewValue}>{fmtPanelDateTime(dropoffAt)}</Text>
       </View>
 
       <Pressable onPress={onPressSearch} style={styles.cta}>
         <Text style={styles.ctaText}>Search Cars</Text>
       </Pressable>
 
-      {/* Android native picker */}
+      {/* Android native sheet */}
       {Platform.OS === "android" ? (
         <AndroidDateTimeSheet
           visible={pickerOpen}
           value={value.pickupAt}
           onClose={() => setPickerOpen(false)}
           onConfirm={(merged) => {
-            onChange({ ...value, pickupAt: merged });
+            onChange({ ...value, pickupAt: clampPickup(merged) });
             setPickerOpen(false);
           }}
         />
@@ -179,7 +198,7 @@ export default function HomeSearchPanel({
                 display="inline"
                 themeVariant="light"
                 onChange={(_e, d) => d && setTempDate(d)}
-                minimumDate={new Date()}
+                minimumDate={minPickupAt} // ✅ date can't be before now+2h day
               />
             </View>
 
@@ -193,6 +212,9 @@ export default function HomeSearchPanel({
                 onChange={(_e, d) => d && setTempTime(d)}
               />
             </View>
+
+            {/* (Time min isn’t supported by native picker in a clean way.
+                We enforce via clampPickup() on Done.) */}
           </View>
         </Modal>
       ) : null}

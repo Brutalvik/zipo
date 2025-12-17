@@ -47,6 +47,7 @@ import SearchResultCard from "@/components/search/SearchResultCard";
 
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
 import { COLORS } from "@/theme/ui";
+import type { Car } from "@/types/car";
 
 function titleCaseCity(input: string) {
   const s = (input || "").trim();
@@ -55,6 +56,25 @@ function titleCaseCity(input: string) {
     .split(/\s+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(" ");
+}
+
+function defaultPickupAtPlus2Hours() {
+  const d = new Date(Date.now() + 2 * 60 * 60 * 1000);
+  d.setSeconds(0);
+  d.setMilliseconds(0);
+  return d;
+}
+
+function matchesCity(car: Car, cityInput: string) {
+  const q = (cityInput || "").trim().toLowerCase();
+  if (!q) return true;
+
+  const hay = [car.city, car.area, car.location, car.countryCode, car.title]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return hay.includes(q);
 }
 
 export default function HomeScreen() {
@@ -79,7 +99,7 @@ export default function HomeScreen() {
 
   const [search, setSearch] = useState<HomeSearchState>({
     location: "",
-    pickupAt: new Date(),
+    pickupAt: defaultPickupAtPlus2Hours(), // ✅ default now + 2 hours
     days: 3,
   });
 
@@ -93,7 +113,7 @@ export default function HomeScreen() {
   const [editorOpen, setEditorOpen] = useState(false);
   const overlay = useRef(new Animated.Value(0)).current;
 
-  // ✅ Use ref + measureInWindow for accurate positioning
+  // measure pill correctly
   const pillRef = useRef<View>(null);
   const [pillStart, setPillStart] = useState<{
     x: number;
@@ -126,7 +146,7 @@ export default function HomeScreen() {
 
   const nearbyCar = featured[0] ?? popular[0] ?? cars[0] ?? null;
 
-  // home browse list
+  // Home browse list (your existing behavior)
   const bestCars = useMemo(() => {
     const list = cars.length ? cars : featured;
     if (selectedType === "All") return list;
@@ -135,7 +155,7 @@ export default function HomeScreen() {
     );
   }, [cars, featured, selectedType]);
 
-  // search results list
+  // Search results list (search mode list)
   const searchResults = useMemo(() => {
     if (!isSearchMode) return [];
     if (selectedType === "All") return cars;
@@ -185,10 +205,9 @@ export default function HomeScreen() {
   }, [overlay, runExitSearchAnim]);
 
   const openEditor = useCallback(() => {
-    // ✅ measure in window coords then convert to SafeAreaView coords
     pillRef.current?.measureInWindow((x, y, w, h) => {
-      const Y_OFFSET = 30;
-      const localY = y - insets.top + Y_OFFSET;
+      const HEADER_VISUAL_OFFSET = 30;
+      const localY = y - insets.top + HEADER_VISUAL_OFFSET;
       setPillStart({ x, y: localY, w, h });
       setEditorOpen(true);
       Animated.timing(overlay, {
@@ -273,17 +292,6 @@ export default function HomeScreen() {
           pillHidden={editorOpen}
         />
 
-        <View style={styles.resultsSummary}>
-          <Text style={styles.resultsCount}>
-            {searchResults.length >= 11
-              ? "11+ cars available"
-              : `${searchResults.length} cars available`}
-          </Text>
-          <Text style={styles.resultsSub}>
-            Showing cars in {titleCaseCity(search.location) || "your area"}
-          </Text>
-        </View>
-
         <FlatList
           data={searchResults}
           keyExtractor={(item) => item.id}
@@ -296,6 +304,21 @@ export default function HomeScreen() {
               }
             />
           )}
+          ListHeaderComponent={
+            <View style={styles.resultsSummary}>
+              <Text style={styles.resultsCount}>
+                {searchResults.length === 0
+                  ? "No cars available"
+                  : `${searchResults.length} cars available`}
+              </Text>
+
+              {searchResults.length !== 0 && (
+                <Text style={styles.resultsSub}>
+                  Showing cars in {titleCaseCity(search.location)}
+                </Text>
+              )}
+            </View>
+          }
           refreshControl={
             <RefreshControl refreshing={isLoading} onRefresh={onPressSearch} />
           }
@@ -306,6 +329,7 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}
         />
 
+        {/* expanding overlay */}
         {editorOpen ? (
           <>
             <Animated.View
@@ -333,7 +357,6 @@ export default function HomeScreen() {
               <HomeSearchPanel
                 value={search}
                 onChange={setSearch}
-                resultCount={searchResults.length}
                 onPressSearch={() => {
                   closeEditor();
                   onPressSearch();
@@ -380,7 +403,6 @@ export default function HomeScreen() {
               <HomeSearchPanel
                 value={search}
                 onChange={setSearch}
-                resultCount={bestCars.length}
                 onPressSearch={onPressSearch}
               />
             </Animated.View>
@@ -480,8 +502,7 @@ const styles = StyleSheet.create({
 
   resultsSummary: {
     paddingHorizontal: 16,
-    paddingTop: 6,
-    paddingBottom: 10,
+    paddingBottom: 4,
   },
   resultsCount: {
     fontSize: 22,

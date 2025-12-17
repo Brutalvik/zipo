@@ -1,4 +1,4 @@
-import React, { forwardRef } from "react";
+import React, { forwardRef, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
@@ -13,31 +13,40 @@ function titleCaseCity(input: string) {
     .join(" ");
 }
 
-function fmtPrettyRange(pickupAt: Date, days: number) {
-  const end = addDays(pickupAt, Math.max(1, days));
+/**
+ * Address-aware:
+ * - If user typed a full address, show it as-is.
+ * - If it's empty, fallback to "Search".
+ * - If it looks like a city, title-case it.
+ */
+function displayLocationLine(location: string) {
+  const raw = (location || "").trim();
+  if (!raw) return "Search";
 
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  const month = (d: Date) => d.toLocaleString("en-US", { month: "short" });
+  // Heuristic: treat as address if it contains a number OR a comma (common in addresses)
+  const looksLikeAddress = /\d/.test(raw) || raw.includes(",");
 
-  const fmt = (d: Date) => {
-    const dd = pad2(d.getDate());
-    const MMM = month(d);
-    const yyyy = d.getFullYear();
+  if (looksLikeAddress) return raw;
 
-    let h = d.getHours();
-    const m = pad2(d.getMinutes());
-    const ampm = h >= 12 ? "PM" : "AM";
-    h = h % 12;
-    if (h === 0) h = 12;
+  return titleCaseCity(raw) || raw;
+}
 
-    return `${dd}-${MMM}-${yyyy} ${pad2(h)}:${m}${ampm}`;
-  };
+// 17-Dec 3:50 PM (no year)
+function fmtCompact(d: Date) {
+  const dd = String(d.getDate()).padStart(2, "0");
+  const MMM = d.toLocaleString("en-US", { month: "short" });
 
-  return `${fmt(pickupAt)} - ${fmt(end)}`;
+  let h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2, "0");
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12;
+  if (h === 0) h = 12;
+
+  return `${dd}-${MMM} ${h}:${m} ${ampm}`;
 }
 
 type Props = {
-  city: string;
+  city: string; // keep prop name to avoid refactors; it may contain address OR city
   pickupAt: Date;
   days: number;
   onPressBack: () => void;
@@ -45,12 +54,18 @@ type Props = {
   pillHidden?: boolean;
 };
 
-// ✅ forwardRef gives parent direct access to measureInWindow
 const SearchResultsHeader = forwardRef<View, Props>(
   function SearchResultsHeader(
     { city, pickupAt, days, onPressBack, onPressPill, pillHidden },
     pillRef
   ) {
+    const rangeText = useMemo(() => {
+      const end = addDays(pickupAt, Math.max(1, days));
+      return `${fmtCompact(pickupAt)} - ${fmtCompact(end)}`;
+    }, [pickupAt, days]);
+
+    const topLine = useMemo(() => displayLocationLine(city), [city]);
+
     return (
       <View style={styles.row}>
         <Pressable
@@ -63,19 +78,22 @@ const SearchResultsHeader = forwardRef<View, Props>(
         </Pressable>
 
         <Pressable
-          ref={pillRef as any}
+          ref={pillRef}
           onPress={onPressPill}
-          style={[styles.pill, SHADOW_CARD, pillHidden ? { opacity: 0 } : null]}
+          style={[
+            styles.pill,
+            SHADOW_CARD,
+            pillHidden ? styles.pillHidden : null,
+          ]}
           accessibilityRole="button"
+          accessibilityLabel="Edit search"
         >
-          <Text style={styles.city} numberOfLines={1}>
-            {titleCaseCity(city) || "Search"}
+          <Text style={styles.location} numberOfLines={1}>
+            {topLine}
           </Text>
 
-          {/* ✅ allow wrap, no truncation */}
-          <Text style={styles.dates} numberOfLines={2}>
-            {fmtPrettyRange(pickupAt, days)}
-          </Text>
+          {/* one line, no font shrink; year removed to fit */}
+          <Text style={styles.range}>{rangeText}</Text>
         </Pressable>
       </View>
     );
@@ -113,12 +131,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-  city: { fontSize: 14, fontWeight: "900", color: COLORS.text },
-  dates: {
+  pillHidden: { opacity: 0 },
+
+  location: { fontSize: 14, fontWeight: "900", color: COLORS.text },
+  range: {
     marginTop: 2,
     fontSize: 12,
     fontWeight: "800",
     color: COLORS.muted,
-    lineHeight: 16,
+    letterSpacing: 0.2,
   },
 });
