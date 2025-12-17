@@ -5,15 +5,14 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   Animated,
   FlatList,
   RefreshControl,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
@@ -39,10 +38,13 @@ import BestCarCard from "@/components/home/BestCarCard";
 import NearbyHeroCard from "@/components/home/NearbyHeroCard";
 import CarGridCard from "@/components/cars/CarGridCard";
 import SearchResultsHeader from "@/components/search/SearchResultsHeader";
+
+// TODO: your results card (list style)
 import SearchResultCard from "@/components/search/SearchResultCard";
 
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
-import { format } from "date-fns";
+
+type Mode = "home" | "results";
 
 export default function HomeScreen() {
   const dispatch = useAppDispatch();
@@ -61,7 +63,7 @@ export default function HomeScreen() {
     statusFeatured === "loading" ||
     statusPopular === "loading";
 
-  const [mode, setMode] = useState<"home" | "results">("home");
+  const [mode, setMode] = useState<Mode>("home");
   const [selectedType, setSelectedType] = useState<string>("All");
 
   const [search, setSearch] = useState<HomeSearchState>({
@@ -69,9 +71,6 @@ export default function HomeScreen() {
     pickupAt: new Date(),
     days: 3,
   });
-
-  // animated collapse of the big search card
-  const collapse = useRef(new Animated.Value(0)).current; // 0 = expanded, 1 = collapsed
 
   const vehicleTypes: string[] = useMemo(() => {
     const base = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : [];
@@ -103,68 +102,110 @@ export default function HomeScreen() {
     );
   }, [cars, featured, selectedType]);
 
-  const subtitle = useMemo(() => {
-    const start = search.pickupAt;
-    const end = new Date(start);
-    end.setDate(end.getDate() + search.days);
-    // matches your screenshot style (12-16 - 12-19)
-    return `${format(start, "MM-dd")}  -  ${format(end, "MM-dd")}`;
-  }, [search.pickupAt, search.days]);
+  // -----------------------------
+  // Animation
+  // -----------------------------
+  const anim = useRef(new Animated.Value(0)).current; // 0 = home, 1 = results
 
-  const onPressSearch = useCallback(() => {
-    const location = search.location.trim();
-
-    // prefer city search: backend supports `city`
-    dispatch(
-      fetchCars({
-        city: location || "",
-        type: selectedType === "All" ? "" : selectedType,
-        limit: 50,
-        status: "active",
-      })
-    );
-
+  const goResults = useCallback(() => {
     setMode("results");
-    Animated.timing(collapse, {
+    Animated.timing(anim, {
       toValue: 1,
-      duration: 220,
+      duration: 280,
       useNativeDriver: true,
     }).start();
-  }, [dispatch, search.location, selectedType, collapse]);
+  }, [anim]);
 
-  const onBackToHome = useCallback(() => {
-    setMode("home");
-    Animated.timing(collapse, {
+  const goHome = useCallback(() => {
+    Animated.timing(anim, {
       toValue: 0,
-      duration: 220,
+      duration: 260,
       useNativeDriver: true,
-    }).start();
-  }, [collapse]);
+    }).start(({ finished }) => {
+      if (finished) setMode("home");
+    });
+  }, [anim]);
 
-  // big search card animation (fade + slide down a bit + scale)
-  const searchCardStyle = {
-    opacity: collapse.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+  // Find card collapses upwards + fades
+  const findCardStyle = {
     transform: [
       {
-        translateY: collapse.interpolate({
+        translateY: anim.interpolate({
           inputRange: [0, 1],
-          outputRange: [0, -14],
+          outputRange: [0, -70],
         }),
       },
       {
-        scale: collapse.interpolate({
+        scale: anim.interpolate({
           inputRange: [0, 1],
-          outputRange: [1, 0.96],
+          outputRange: [1, 0.92],
         }),
       },
     ],
+    opacity: anim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [1, 0],
+    }),
   };
 
+  // Results header appears from top
+  const resultsHeaderStyle = {
+    transform: [
+      {
+        translateY: anim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [-10, 0],
+        }),
+      },
+    ],
+    opacity: anim,
+  };
+
+  const onPressSearch = useCallback(() => {
+    dispatch(
+      fetchCars({
+        // ✅ better city search: use city param
+        city: search.location?.trim() || "",
+        type: selectedType === "All" ? "" : selectedType,
+        limit: 20,
+      })
+    );
+    goResults();
+  }, [dispatch, goResults, search.location, selectedType]);
+
+  // -----------------------------
+  // ✅ Render
+  // -----------------------------
   return (
     <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-      {mode === "home" ? (
+      {/* ✅ Results header (animated, white theme) */}
+      <Animated.View style={[styles.resultsHeaderWrap, resultsHeaderStyle]}>
+        <SearchResultsHeader
+          city={search.location.trim() || "Search"}
+          pickupAt={search.pickupAt}
+          days={search.days}
+          onPressBack={goHome}
+        />
+      </Animated.View>
+
+      {mode === "results" ? (
         <FlatList
-          key="home-grid"
+          key="results-list" // ✅ avoid numColumns invariant
+          data={cars}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <SearchResultCard car={item} />}
+          refreshControl={
+            <RefreshControl refreshing={isLoading} onRefresh={load} />
+          }
+          contentContainerStyle={{
+            paddingTop: 8,
+            paddingBottom: tabBarHeight + 20,
+          }}
+          showsVerticalScrollIndicator={false}
+        />
+      ) : (
+        <FlatList
+          key="home-grid" // ✅ avoid numColumns invariant
           data={bestCars}
           keyExtractor={(item) => item.id}
           numColumns={2}
@@ -177,7 +218,8 @@ export default function HomeScreen() {
             <View style={styles.header}>
               <AppHeader />
 
-              <Animated.View style={searchCardStyle}>
+              {/* ✅ this is what “disappears” into header */}
+              <Animated.View style={findCardStyle}>
                 <HomeSearchPanel
                   value={search}
                   onChange={setSearch}
@@ -187,7 +229,7 @@ export default function HomeScreen() {
               </Animated.View>
 
               <View style={styles.sectionPad}>
-                <Text style={styles.h1}>Vehicle types</Text>
+                <SectionHeader title="Vehicle types" />
                 <FlatList
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -204,17 +246,7 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.sectionPad}>
-                <SectionHeader
-                  title="Best Cars"
-                  actionText="View All"
-                  onPressAction={() => {}}
-                />
-                <Text style={styles.subtle}>
-                  {selectedType === "All"
-                    ? "Available"
-                    : `Filtered: ${selectedType}`}
-                </Text>
-
+                <SectionHeader title="Best Cars" actionText="View All" />
                 <FlatList
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -226,11 +258,7 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.sectionPad}>
-                <SectionHeader
-                  title="Nearby"
-                  actionText="View All"
-                  onPressAction={() => {}}
-                />
+                <SectionHeader title="Nearby" actionText="View All" />
                 {nearbyCar ? (
                   <View style={{ marginTop: 10 }}>
                     <NearbyHeroCard car={nearbyCar} />
@@ -239,43 +267,11 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.sectionPad}>
-                <SectionHeader
-                  title="Explore"
-                  actionText="View All"
-                  onPressAction={() => {}}
-                />
-                <Text style={styles.subtle}>Top picks for you</Text>
+                <SectionHeader title="Explore" actionText="View All" />
               </View>
             </View>
           }
           contentContainerStyle={{ paddingBottom: tabBarHeight + 28 }}
-          showsVerticalScrollIndicator={false}
-        />
-      ) : (
-        <FlatList
-          key="results-grid"
-          data={cars} // results list from fetchCars
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <SearchResultCard car={item} />}
-          refreshControl={
-            <RefreshControl
-              refreshing={isLoading}
-              onRefresh={() => onPressSearch()}
-            />
-          }
-          ListHeaderComponent={
-            <View>
-              <SearchResultsHeader
-                title={search.location.trim() || "Search"}
-                subtitle={subtitle}
-                onBack={onBackToHome}
-              />
-
-              {/* keep HomeSearchPanel off-screen / collapsed (optional) */}
-              {/* If you want “tap header to expand filters”, we can add later */}
-            </View>
-          }
-          contentContainerStyle={{ paddingBottom: tabBarHeight + 22 }}
           showsVerticalScrollIndicator={false}
         />
       )}
@@ -286,11 +282,14 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   header: { paddingBottom: 6 },
   sectionPad: { paddingHorizontal: 16, paddingTop: 16 },
-  h1: { fontSize: 18, fontWeight: "900", marginBottom: 12 },
-  subtle: { marginTop: 6, fontSize: 12, opacity: 0.6, fontWeight: "700" },
+
   gridRow: {
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+
+  resultsHeaderWrap: {
+    // keeps layout stable; white theme
   },
 });

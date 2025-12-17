@@ -2,63 +2,78 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
+import { titleCaseCity } from "./helpers";
+
+function fmtRange(pickupAt: Date, days: number) {
+  const start = new Date(pickupAt);
+  const end = new Date(pickupAt);
+  end.setDate(end.getDate() + Math.max(1, days));
+
+  // simple MM-DD
+  const mmdd = (d: Date) =>
+    `${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
+
+  return `${mmdd(start)} - ${mmdd(end)}`;
+}
 
 export default function SearchResultsHeader({
-  title,
-  subtitle,
-  onBack,
+  city,
+  pickupAt,
+  days,
+  onPressBack,
 }: {
-  title: string;
-  subtitle: string;
-  onBack: () => void;
+  city: string;
+  pickupAt: Date;
+  days: number;
+  onPressBack: () => void;
 }) {
   return (
-    <View style={styles.wrap}>
-      <Pressable onPress={onBack} style={[styles.backBtn, SHADOW_CARD]}>
-        <Feather name="chevron-left" size={20} color={COLORS.text} />
+    <View style={styles.row}>
+      <Pressable onPress={onPressBack} style={[styles.backBtn, SHADOW_CARD]}>
+        <Feather name="chevron-left" size={18} color={COLORS.text} />
       </Pressable>
 
       <View style={[styles.pill, SHADOW_CARD]}>
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
+        <Text style={styles.city} numberOfLines={1}>
+          {titleCaseCity(city) || "Search"}
         </Text>
-        <Text style={styles.sub} numberOfLines={1}>
-          {subtitle}
-        </Text>
+        <Text style={styles.dates}>{fmtRange(pickupAt, days)}</Text>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     paddingHorizontal: 16,
-    paddingTop: 6,
+    paddingTop: 8,
     paddingBottom: 10,
-    backgroundColor: COLORS.white, // keep white theme
+    backgroundColor: COLORS.bg,
   },
   backBtn: {
     width: 42,
     height: 42,
     borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
   },
   pill: {
     flex: 1,
-    borderRadius: 999,
+    borderRadius: 18,
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
-  title: { fontSize: 14, fontWeight: "900", color: COLORS.text },
-  sub: { marginTop: 3, fontSize: 12, fontWeight: "700", color: COLORS.muted },
+  city: { fontSize: 14, fontWeight: "900", color: COLORS.text },
+  dates: { marginTop: 2, fontSize: 12, fontWeight: "800", color: COLORS.muted },
 });
