@@ -6,8 +6,10 @@ import React, {
   useState,
 } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Animated,
+  Dimensions,
   FlatList,
   Pressable,
   RefreshControl,
@@ -15,7 +17,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
@@ -40,11 +41,12 @@ import TypePill from "@/components/home/TypePill";
 import BestCarCard from "@/components/home/BestCarCard";
 import NearbyHeroCard from "@/components/home/NearbyHeroCard";
 import CarGridCard from "@/components/cars/CarGridCard";
-import CarListCard from "@/components/cars/CarListCard";
+
+import SearchResultsHeader from "@/components/search/SearchResultsHeader";
+import SearchResultCard from "@/components/search/SearchResultCard";
 
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
-import { COLORS, RADIUS } from "@/theme/ui";
-import { addDays } from "@/lib/date";
+import { COLORS } from "@/theme/ui";
 
 function titleCaseCity(input: string) {
   const s = (input || "").trim();
@@ -55,28 +57,10 @@ function titleCaseCity(input: string) {
     .join(" ");
 }
 
-function formatHeaderRange(start: Date, days: number) {
-  const end = addDays(start, days);
-  const fmt = (d: Date) => {
-    const dd = String(d.getDate()).padStart(2, "0");
-    const MMM = d.toLocaleString("en-US", { month: "short" });
-    const yy = String(d.getFullYear()).slice(-2);
-
-    let h = d.getHours();
-    const m = String(d.getMinutes()).padStart(2, "0");
-    const ampm = h >= 12 ? "PM" : "AM";
-    h = h % 12;
-    if (h === 0) h = 12;
-
-    return `${dd}-${MMM}-${yy} ${h}:${m}${ampm}`;
-  };
-
-  return `${fmt(start)} - ${fmt(end)}`;
-}
-
 export default function HomeScreen() {
   const dispatch = useAppDispatch();
   const tabBarHeight = useBottomTabBarHeight();
+  const insets = useSafeAreaInsets();
 
   const featured = useAppSelector(selectFeaturedCars);
   const popular = useAppSelector(selectPopularCars);
@@ -99,11 +83,26 @@ export default function HomeScreen() {
     days: 3,
   });
 
-  // Search mode toggles the whole view (HOME vs SEARCH RESULTS)
   const [isSearchMode, setIsSearchMode] = useState(false);
+  const [favIds, setFavIds] = useState<Record<string, boolean>>({});
 
-  // Animate "Find your car" panel collapsing away
-  const anim = useRef(new Animated.Value(0)).current; // 0 = home, 1 = search mode
+  // collapse home search panel when entering search mode
+  const anim = useRef(new Animated.Value(0)).current;
+
+  // overlay expansion (pill -> editor)
+  const [editorOpen, setEditorOpen] = useState(false);
+  const overlay = useRef(new Animated.Value(0)).current;
+
+  // ✅ Use ref + measureInWindow for accurate positioning
+  const pillRef = useRef<View>(null);
+  const [pillStart, setPillStart] = useState<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
+
+  const { width: SCREEN_W } = Dimensions.get("window");
 
   const vehicleTypes: string[] = useMemo(() => {
     const base = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : [];
@@ -127,6 +126,7 @@ export default function HomeScreen() {
 
   const nearbyCar = featured[0] ?? popular[0] ?? cars[0] ?? null;
 
+  // home browse list
   const bestCars = useMemo(() => {
     const list = cars.length ? cars : featured;
     if (selectedType === "All") return list;
@@ -135,11 +135,20 @@ export default function HomeScreen() {
     );
   }, [cars, featured, selectedType]);
 
+  // search results list
+  const searchResults = useMemo(() => {
+    if (!isSearchMode) return [];
+    if (selectedType === "All") return cars;
+    return cars.filter(
+      (c) => (c.vehicleType ?? "").toLowerCase() === selectedType.toLowerCase()
+    );
+  }, [cars, selectedType, isSearchMode]);
+
   const runEnterSearchAnim = useCallback(() => {
     Animated.timing(anim, {
       toValue: 1,
       duration: 220,
-      useNativeDriver: false, // we animate height
+      useNativeDriver: false,
     }).start();
   }, [anim]);
 
@@ -157,7 +166,6 @@ export default function HomeScreen() {
   const onPressSearch = useCallback(() => {
     const city = search.location.trim();
 
-    // Fetch city-specific (best practice) instead of stuffing into q
     dispatch(
       fetchCars({
         city: city || "",
@@ -171,24 +179,35 @@ export default function HomeScreen() {
   }, [dispatch, search.location, selectedType, runEnterSearchAnim]);
 
   const onPressBackFromSearch = useCallback(() => {
-    runExitSearchAnim(() => {
-      setIsSearchMode(false);
-      // optional: reload home sections if you want
-      // loadHome();
+    setEditorOpen(false);
+    overlay.setValue(0);
+    runExitSearchAnim(() => setIsSearchMode(false));
+  }, [overlay, runExitSearchAnim]);
+
+  const openEditor = useCallback(() => {
+    // ✅ measure in window coords then convert to SafeAreaView coords
+    pillRef.current?.measureInWindow((x, y, w, h) => {
+      const Y_OFFSET = 30;
+      const localY = y - insets.top + Y_OFFSET;
+      setPillStart({ x, y: localY, w, h });
+      setEditorOpen(true);
+      Animated.timing(overlay, {
+        toValue: 1,
+        duration: 240,
+        useNativeDriver: false,
+      }).start();
     });
-  }, [runExitSearchAnim]);
+  }, [insets.top, overlay]);
 
-  const headerRange = useMemo(
-    () => formatHeaderRange(search.pickupAt, search.days),
-    [search.pickupAt, search.days]
-  );
+  const closeEditor = useCallback(() => {
+    Animated.timing(overlay, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start(() => setEditorOpen(false));
+  }, [overlay]);
 
-  const headerCity = useMemo(
-    () => titleCaseCity(search.location) || "Your area",
-    [search.location]
-  );
-
-  // ---- Animated collapse of the big card ----
+  // home panel collapse anim
   const panelHeight = anim.interpolate({
     inputRange: [0, 1],
     outputRange: [1, 0],
@@ -202,80 +221,138 @@ export default function HomeScreen() {
     outputRange: [8, 0],
   });
 
-  // ---- Search header (compact) ----
-  const compactOpacity = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
-  const compactTranslate = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-6, 0],
-  });
-
-  // ✅ SEARCH RESULTS VIEW (list cards)
+  // ---------------------------
+  // SEARCH MODE
+  // ---------------------------
   if (isSearchMode) {
+    const start = pillStart ?? {
+      x: 70,
+      y: 60,
+      w: SCREEN_W - 120,
+      h: 56,
+    };
+
+    const top = overlay.interpolate({
+      inputRange: [0, 1],
+      outputRange: [start.y, start.y],
+    });
+    const left = overlay.interpolate({
+      inputRange: [0, 1],
+      outputRange: [start.x, 16],
+    });
+    const w = overlay.interpolate({
+      inputRange: [0, 1],
+      outputRange: [start.w, SCREEN_W - 32],
+    });
+    const h = overlay.interpolate({
+      inputRange: [0, 1],
+      outputRange: [start.h, 430],
+    });
+    const radius = overlay.interpolate({
+      inputRange: [0, 1],
+      outputRange: [18, 24],
+    });
+    const backdropOpacity = overlay.interpolate({
+      inputRange: [0, 1],
+      outputRange: [0, 0.25],
+    });
+
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        {/* keep AppHeader visible in search view + add subtle shadow under it */}
         <View style={styles.topHeaderShadow}>
           <AppHeader />
         </View>
 
-        {/* compact “search header row” */}
-        <Animated.View
-          style={[
-            styles.searchHeaderRow,
-            {
-              opacity: compactOpacity,
-              transform: [{ translateY: compactTranslate }],
-            },
-          ]}
-        >
-          <Pressable
-            onPress={onPressBackFromSearch}
-            style={styles.backBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-          >
-            <Feather name="chevron-left" size={20} color={COLORS.text} />
-          </Pressable>
+        <SearchResultsHeader
+          ref={pillRef}
+          city={search.location}
+          pickupAt={search.pickupAt}
+          days={search.days}
+          onPressBack={onPressBackFromSearch}
+          onPressPill={openEditor}
+          pillHidden={editorOpen}
+        />
 
-          <View style={styles.searchPill}>
-            <Text style={styles.searchCity} numberOfLines={1}>
-              {headerCity}
-            </Text>
-            <Text style={styles.searchDates} numberOfLines={1}>
-              {headerRange}
-            </Text>
-
-            {/* optional count */}
-            <Text style={styles.searchCount} numberOfLines={1}>
-              {bestCars.length} cars available
-            </Text>
-          </View>
-        </Animated.View>
+        <View style={styles.resultsSummary}>
+          <Text style={styles.resultsCount}>
+            {searchResults.length >= 11
+              ? "11+ cars available"
+              : `${searchResults.length} cars available`}
+          </Text>
+          <Text style={styles.resultsSub}>
+            Showing cars in {titleCaseCity(search.location) || "your area"}
+          </Text>
+        </View>
 
         <FlatList
-          data={bestCars}
+          data={searchResults}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <CarListCard car={item} />}
-          refreshControl={
-            <RefreshControl
-              refreshing={isLoading}
-              onRefresh={() => onPressSearch()}
+          renderItem={({ item }) => (
+            <SearchResultCard
+              car={item}
+              isFav={!!favIds[item.id]}
+              onPressFav={() =>
+                setFavIds((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
+              }
             />
+          )}
+          refreshControl={
+            <RefreshControl refreshing={isLoading} onRefresh={onPressSearch} />
           }
           contentContainerStyle={{
             paddingBottom: tabBarHeight + 24,
-            paddingTop: 10,
+            paddingTop: 6,
           }}
           showsVerticalScrollIndicator={false}
         />
+
+        {editorOpen ? (
+          <>
+            <Animated.View
+              pointerEvents="auto"
+              style={[StyleSheet.absoluteFill, { opacity: backdropOpacity }]}
+            >
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={closeEditor}
+              />
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.editorOverlay,
+                {
+                  top,
+                  left,
+                  width: w,
+                  height: h,
+                  borderRadius: radius as any,
+                },
+              ]}
+            >
+              <HomeSearchPanel
+                value={search}
+                onChange={setSearch}
+                resultCount={searchResults.length}
+                onPressSearch={() => {
+                  closeEditor();
+                  onPressSearch();
+                }}
+                containerStyle={{
+                  marginHorizontal: 0,
+                  marginTop: 0,
+                }}
+              />
+            </Animated.View>
+          </>
+        ) : null}
       </SafeAreaView>
     );
   }
 
-  //  NORMAL HOME VIEW
+  // ---------------------------
+  // HOME MODE
+  // ---------------------------
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <FlatList
@@ -293,7 +370,6 @@ export default function HomeScreen() {
               <AppHeader />
             </View>
 
-            {/* Big search panel (collapsible when you go to search mode) */}
             <Animated.View
               style={{
                 opacity: panelOpacity,
@@ -379,7 +455,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F6F7FB" }, // keep your light theme
+  safe: { flex: 1, backgroundColor: "#F6F7FB" },
 
   header: { paddingBottom: 6 },
   sectionPad: { paddingHorizontal: 16, paddingTop: 16 },
@@ -393,7 +469,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
 
-  // ✅ subtle shadow under the header bar (AppHeader area)
   topHeaderShadow: {
     backgroundColor: "transparent",
     shadowColor: "#000",
@@ -403,59 +478,26 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
 
-  // ✅ compact search header row
-  searchHeaderRow: {
+  resultsSummary: {
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    paddingTop: 6,
+    paddingBottom: 10,
   },
-
-  // ✅ glassier back button
-  backBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.72)",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.10)",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+  resultsCount: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: COLORS.text,
   },
-
-  searchPill: {
-    flex: 1,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: "rgba(255,255,255,0.9)",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.10)",
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  searchCity: { fontSize: 14, fontWeight: "900", color: COLORS.text },
-  searchDates: {
-    marginTop: 2,
-    fontSize: 12,
+  resultsSub: {
+    marginTop: 4,
+    fontSize: 13,
     fontWeight: "800",
     color: COLORS.muted,
   },
-  searchCount: {
-    marginTop: 4,
-    fontSize: 12,
-    fontWeight: "800",
-    color: COLORS.text,
-    opacity: 0.8,
+
+  editorOverlay: {
+    position: "absolute",
+    backgroundColor: "transparent",
+    overflow: "hidden",
   },
 });

@@ -36,11 +36,13 @@ export default function HomeSearchPanel({
   onChange,
   resultCount,
   onPressSearch,
+  containerStyle,
 }: {
   value: HomeSearchState;
   onChange: (next: HomeSearchState) => void;
   resultCount: number;
   onPressSearch: () => void;
+  containerStyle?: any;
 }) {
   const [daysOpen, setDaysOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -84,7 +86,7 @@ export default function HomeSearchPanel({
   const prettyCount = resultCount === 1 ? "1 car" : `${resultCount} cars`;
 
   return (
-    <View style={[styles.card, SHADOW_CARD]}>
+    <View style={[styles.card, SHADOW_CARD, containerStyle]}>
       <Text style={styles.title}>Find your car</Text>
 
       <Text style={styles.label}>Location</Text>
@@ -118,7 +120,7 @@ export default function HomeSearchPanel({
         <Text style={styles.previewValue}>{formatDateTime(dropoffAt)}</Text>
       </View>
 
-      {/* ✅ LIVE RESULT COUNT (high contrast) */}
+      {/* LIVE RESULT COUNT */}
       <View style={styles.countRow}>
         <View style={styles.countBadge}>
           <Text style={styles.countBadgeText}>{prettyCount}</Text>

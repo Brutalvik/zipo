@@ -1,49 +1,88 @@
-import React from "react";
+import React, { forwardRef } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
-import { titleCaseCity } from "./helpers";
+import { addDays } from "@/lib/date";
 
-function fmtRange(pickupAt: Date, days: number) {
-  const start = new Date(pickupAt);
-  const end = new Date(pickupAt);
-  end.setDate(end.getDate() + Math.max(1, days));
-
-  // simple MM-DD
-  const mmdd = (d: Date) =>
-    `${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-      d.getDate()
-    ).padStart(2, "0")}`;
-
-  return `${mmdd(start)} - ${mmdd(end)}`;
+function titleCaseCity(input: string) {
+  const s = (input || "").trim();
+  if (!s) return "";
+  return s
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
 }
 
-export default function SearchResultsHeader({
-  city,
-  pickupAt,
-  days,
-  onPressBack,
-}: {
+function fmtPrettyRange(pickupAt: Date, days: number) {
+  const end = addDays(pickupAt, Math.max(1, days));
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const month = (d: Date) => d.toLocaleString("en-US", { month: "short" });
+
+  const fmt = (d: Date) => {
+    const dd = pad2(d.getDate());
+    const MMM = month(d);
+    const yyyy = d.getFullYear();
+
+    let h = d.getHours();
+    const m = pad2(d.getMinutes());
+    const ampm = h >= 12 ? "PM" : "AM";
+    h = h % 12;
+    if (h === 0) h = 12;
+
+    return `${dd}-${MMM}-${yyyy} ${pad2(h)}:${m}${ampm}`;
+  };
+
+  return `${fmt(pickupAt)} - ${fmt(end)}`;
+}
+
+type Props = {
   city: string;
   pickupAt: Date;
   days: number;
   onPressBack: () => void;
-}) {
-  return (
-    <View style={styles.row}>
-      <Pressable onPress={onPressBack} style={[styles.backBtn, SHADOW_CARD]}>
-        <Feather name="chevron-left" size={18} color={COLORS.text} />
-      </Pressable>
+  onPressPill?: () => void;
+  pillHidden?: boolean;
+};
 
-      <View style={[styles.pill, SHADOW_CARD]}>
-        <Text style={styles.city} numberOfLines={1}>
-          {titleCaseCity(city) || "Search"}
-        </Text>
-        <Text style={styles.dates}>{fmtRange(pickupAt, days)}</Text>
+// ✅ forwardRef gives parent direct access to measureInWindow
+const SearchResultsHeader = forwardRef<View, Props>(
+  function SearchResultsHeader(
+    { city, pickupAt, days, onPressBack, onPressPill, pillHidden },
+    pillRef
+  ) {
+    return (
+      <View style={styles.row}>
+        <Pressable
+          onPress={onPressBack}
+          style={[styles.backBtn, SHADOW_CARD]}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
+          <Feather name="chevron-left" size={18} color={COLORS.text} />
+        </Pressable>
+
+        <Pressable
+          ref={pillRef as any}
+          onPress={onPressPill}
+          style={[styles.pill, SHADOW_CARD, pillHidden ? { opacity: 0 } : null]}
+          accessibilityRole="button"
+        >
+          <Text style={styles.city} numberOfLines={1}>
+            {titleCaseCity(city) || "Search"}
+          </Text>
+
+          {/* ✅ allow wrap, no truncation */}
+          <Text style={styles.dates} numberOfLines={2}>
+            {fmtPrettyRange(pickupAt, days)}
+          </Text>
+        </Pressable>
       </View>
-    </View>
-  );
-}
+    );
+  }
+);
+
+export default SearchResultsHeader;
 
 const styles = StyleSheet.create({
   row: {
@@ -67,8 +106,7 @@ const styles = StyleSheet.create({
   },
   pill: {
     flex: 1,
-    paddingLeft: 14,
-    borderRadius: 18,
+    borderRadius: RADIUS.xl,
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -76,5 +114,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   city: { fontSize: 14, fontWeight: "900", color: COLORS.text },
-  dates: { marginTop: 2, fontSize: 12, fontWeight: "800", color: COLORS.muted },
+  dates: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.muted,
+    lineHeight: 16,
+  },
 });
