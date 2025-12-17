@@ -1,13 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { SafeAreaView } from "react-native-safe-area-context";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  Animated,
   FlatList,
   RefreshControl,
   StyleSheet,
   Text,
   View,
-  Pressable,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
@@ -32,11 +38,11 @@ import TypePill from "@/components/home/TypePill";
 import BestCarCard from "@/components/home/BestCarCard";
 import NearbyHeroCard from "@/components/home/NearbyHeroCard";
 import CarGridCard from "@/components/cars/CarGridCard";
-import CarListCard from "@/components/cars/CarListCard";
+import SearchResultsHeader from "@/components/search/SearchResultsHeader";
+import SearchResultCard from "@/components/search/SearchResultCard";
 
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
-
-type Mode = "home" | "search";
+import { format } from "date-fns";
 
 export default function HomeScreen() {
   const dispatch = useAppDispatch();
@@ -55,9 +61,7 @@ export default function HomeScreen() {
     statusFeatured === "loading" ||
     statusPopular === "loading";
 
-  const [mode, setMode] = useState<Mode>("home");
-  const [lastQuery, setLastQuery] = useState<string>("");
-
+  const [mode, setMode] = useState<"home" | "results">("home");
   const [selectedType, setSelectedType] = useState<string>("All");
 
   const [search, setSearch] = useState<HomeSearchState>({
@@ -65,6 +69,9 @@ export default function HomeScreen() {
     pickupAt: new Date(),
     days: 3,
   });
+
+  // animated collapse of the big search card
+  const collapse = useRef(new Animated.Value(0)).current; // 0 = expanded, 1 = collapsed
 
   const vehicleTypes: string[] = useMemo(() => {
     const base = Array.isArray(vehicleTypesRaw) ? vehicleTypesRaw : [];
@@ -74,17 +81,17 @@ export default function HomeScreen() {
     return ["All", ...labels];
   }, []);
 
-  const loadHome = useCallback(async () => {
+  const load = useCallback(async () => {
     await Promise.all([
       dispatch(fetchFeaturedCars(10)),
       dispatch(fetchPopularCars(10)),
-      dispatch(fetchCars({ limit: 20, sort: "popular", status: "active" })),
+      dispatch(fetchCars({ limit: 20 })),
     ]);
   }, [dispatch]);
 
   useEffect(() => {
-    loadHome();
-  }, [loadHome]);
+    load();
+  }, [load]);
 
   const nearbyCar = featured[0] ?? popular[0] ?? cars[0] ?? null;
 
@@ -96,247 +103,194 @@ export default function HomeScreen() {
     );
   }, [cars, featured, selectedType]);
 
-  // -----------------------
-  // SEARCH ACTION (switch to search mode)
-  // -----------------------
+  const subtitle = useMemo(() => {
+    const start = search.pickupAt;
+    const end = new Date(start);
+    end.setDate(end.getDate() + search.days);
+    // matches your screenshot style (12-16 - 12-19)
+    return `${format(start, "MM-dd")}  -  ${format(end, "MM-dd")}`;
+  }, [search.pickupAt, search.days]);
+
   const onPressSearch = useCallback(() => {
-    const text = search.location.trim();
-    setLastQuery(text);
+    const location = search.location.trim();
 
-    // Switch UI to search results mode
-    setMode("search");
-
-    // City-first + q fallback (matches your backend filters)
+    // prefer city search: backend supports `city`
     dispatch(
       fetchCars({
-        city: text || "",
-        q: text || "",
+        city: location || "",
         type: selectedType === "All" ? "" : selectedType,
+        limit: 50,
         status: "active",
-        hasImage: "true",
-        sort: "popular",
-        limit: 30,
-        offset: 0,
       })
     );
-  }, [dispatch, search.location, selectedType]);
 
-  // -----------------------
-  // CLEAR SEARCH (back to home)
-  // -----------------------
-  const clearSearch = useCallback(() => {
+    setMode("results");
+    Animated.timing(collapse, {
+      toValue: 1,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [dispatch, search.location, selectedType, collapse]);
+
+  const onBackToHome = useCallback(() => {
     setMode("home");
-    setLastQuery("");
-    // keep the user inputs in the panel (nice UX), just reload the home content
-    loadHome();
-  }, [loadHome]);
+    Animated.timing(collapse, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [collapse]);
 
-  // -----------------------
-  // PULL TO REFRESH BEHAVIOR
-  // -----------------------
-  const onRefresh = useCallback(() => {
-    if (mode === "search") {
-      // re-run last search
-      const text = search.location.trim();
-      dispatch(
-        fetchCars({
-          city: text || "",
-          q: text || "",
-          type: selectedType === "All" ? "" : selectedType,
-          status: "active",
-          hasImage: "true",
-          sort: "popular",
-          limit: 30,
-          offset: 0,
-        })
-      );
-      return;
-    }
-    loadHome();
-  }, [dispatch, loadHome, mode, search.location, selectedType]);
+  // big search card animation (fade + slide down a bit + scale)
+  const searchCardStyle = {
+    opacity: collapse.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+    transform: [
+      {
+        translateY: collapse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -14],
+        }),
+      },
+      {
+        scale: collapse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 0.96],
+        }),
+      },
+    ],
+  };
 
-  // -----------------------
-  // RENDER: SEARCH MODE (LIST)
-  // -----------------------
-  if (mode === "search") {
-    return (
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+  return (
+    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      {mode === "home" ? (
         <FlatList
-          key="search-list"
-          data={cars}
+          key="home-grid"
+          data={bestCars}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <CarListCard car={item} />}
+          numColumns={2}
+          columnWrapperStyle={styles.gridRow}
+          renderItem={({ item }) => <CarGridCard car={item} />}
           refreshControl={
-            <RefreshControl refreshing={isLoading} onRefresh={onRefresh} />
+            <RefreshControl refreshing={isLoading} onRefresh={load} />
           }
           ListHeaderComponent={
             <View style={styles.header}>
               <AppHeader />
 
-              <HomeSearchPanel
-                value={search}
-                onChange={setSearch}
-                resultCount={cars.length}
-                onPressSearch={onPressSearch}
-              />
+              <Animated.View style={searchCardStyle}>
+                <HomeSearchPanel
+                  value={search}
+                  onChange={setSearch}
+                  resultCount={bestCars.length}
+                  onPressSearch={onPressSearch}
+                />
+              </Animated.View>
 
-              <View style={styles.searchHeaderRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.searchTitle}>
-                    {cars.length
-                      ? `${cars.length}+ cars available`
-                      : "No cars found"}
-                  </Text>
-                  <Text style={styles.searchSub}>
-                    {lastQuery
-                      ? `Showing results for “${lastQuery}”.`
-                      : "Showing all available cars."}
-                  </Text>
-                </View>
+              <View style={styles.sectionPad}>
+                <Text style={styles.h1}>Vehicle types</Text>
+                <FlatList
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  data={vehicleTypes}
+                  keyExtractor={(t) => t}
+                  renderItem={({ item }) => (
+                    <TypePill
+                      label={item}
+                      selected={item === selectedType}
+                      onPress={() => setSelectedType(item)}
+                    />
+                  )}
+                />
+              </View>
 
-                <Pressable onPress={clearSearch} style={styles.clearBtn}>
-                  <Text style={styles.clearBtnText}>Clear</Text>
-                </Pressable>
+              <View style={styles.sectionPad}>
+                <SectionHeader
+                  title="Best Cars"
+                  actionText="View All"
+                  onPressAction={() => {}}
+                />
+                <Text style={styles.subtle}>
+                  {selectedType === "All"
+                    ? "Available"
+                    : `Filtered: ${selectedType}`}
+                </Text>
+
+                <FlatList
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  data={popular}
+                  keyExtractor={(c) => c.id}
+                  renderItem={({ item }) => <BestCarCard car={item} />}
+                  contentContainerStyle={{ paddingTop: 10, paddingBottom: 4 }}
+                />
+              </View>
+
+              <View style={styles.sectionPad}>
+                <SectionHeader
+                  title="Nearby"
+                  actionText="View All"
+                  onPressAction={() => {}}
+                />
+                {nearbyCar ? (
+                  <View style={{ marginTop: 10 }}>
+                    <NearbyHeroCard car={nearbyCar} />
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.sectionPad}>
+                <SectionHeader
+                  title="Explore"
+                  actionText="View All"
+                  onPressAction={() => {}}
+                />
+                <Text style={styles.subtle}>Top picks for you</Text>
               </View>
             </View>
           }
-          contentContainerStyle={{
-            paddingHorizontal: 16,
-            paddingBottom: tabBarHeight + 24,
-          }}
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 28 }}
           showsVerticalScrollIndicator={false}
         />
-      </SafeAreaView>
-    );
-  }
-
-  // -----------------------
-  // RENDER: HOME MODE (ORIGINAL)
-  // -----------------------
-  return (
-    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
-      <FlatList
-        key="home-grid"
-        data={bestCars}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.gridRow}
-        renderItem={({ item }) => <CarGridCard car={item} />}
-        refreshControl={
-          <RefreshControl refreshing={isLoading} onRefresh={onRefresh} />
-        }
-        ListHeaderComponent={
-          <View style={styles.header}>
-            <AppHeader />
-
-            <HomeSearchPanel
-              value={search}
-              onChange={setSearch}
-              resultCount={bestCars.length}
-              onPressSearch={onPressSearch}
+      ) : (
+        <FlatList
+          key="results-grid"
+          data={cars} // results list from fetchCars
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <SearchResultCard car={item} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={() => onPressSearch()}
             />
-
-            <View style={styles.sectionPad}>
-              <Text style={styles.h1}>Vehicle types</Text>
-              <FlatList
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                data={vehicleTypes}
-                keyExtractor={(t) => t}
-                renderItem={({ item }) => (
-                  <TypePill
-                    label={item}
-                    selected={item === selectedType}
-                    onPress={() => setSelectedType(item)}
-                  />
-                )}
+          }
+          ListHeaderComponent={
+            <View>
+              <SearchResultsHeader
+                title={search.location.trim() || "Search"}
+                subtitle={subtitle}
+                onBack={onBackToHome}
               />
+
+              {/* keep HomeSearchPanel off-screen / collapsed (optional) */}
+              {/* If you want “tap header to expand filters”, we can add later */}
             </View>
-
-            <View style={styles.sectionPad}>
-              <SectionHeader
-                title="Best Cars"
-                actionText="View All"
-                onPressAction={() => {}}
-              />
-              <Text style={styles.subtle}>
-                {selectedType === "All"
-                  ? "Available"
-                  : `Filtered: ${selectedType}`}
-              </Text>
-
-              <FlatList
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                data={popular}
-                keyExtractor={(c) => c.id}
-                renderItem={({ item }) => <BestCarCard car={item} />}
-                contentContainerStyle={{ paddingTop: 10, paddingBottom: 4 }}
-              />
-            </View>
-
-            <View style={styles.sectionPad}>
-              <SectionHeader
-                title="Nearby"
-                actionText="View All"
-                onPressAction={() => {}}
-              />
-              {nearbyCar ? (
-                <View style={{ marginTop: 10 }}>
-                  <NearbyHeroCard car={nearbyCar} />
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.sectionPad}>
-              <SectionHeader
-                title="Explore"
-                actionText="View All"
-                onPressAction={() => {}}
-              />
-              <Text style={styles.subtle}>Top picks for you</Text>
-            </View>
-          </View>
-        }
-        contentContainerStyle={{ paddingBottom: tabBarHeight + 28 }}
-        showsVerticalScrollIndicator={false}
-      />
+          }
+          contentContainerStyle={{ paddingBottom: tabBarHeight + 22 }}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   header: { paddingBottom: 6 },
-
   sectionPad: { paddingHorizontal: 16, paddingTop: 16 },
   h1: { fontSize: 18, fontWeight: "900", marginBottom: 12 },
   subtle: { marginTop: 6, fontSize: 12, opacity: 0.6, fontWeight: "700" },
-
   gridRow: {
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
-
-  // Search header bits
-  searchHeaderRow: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  searchTitle: { fontSize: 18, fontWeight: "900", color: "#111827" },
-  searchSub: { marginTop: 6, fontSize: 12, fontWeight: "700", opacity: 0.6 },
-
-  clearBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "rgba(0,0,0,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-  },
-  clearBtnText: { fontSize: 12, fontWeight: "900", color: "#111827" },
 });
