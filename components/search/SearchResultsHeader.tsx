@@ -67,6 +67,7 @@ const styles = StyleSheet.create({
   },
   pill: {
     flex: 1,
+    paddingLeft: 14,
     borderRadius: 18,
     backgroundColor: COLORS.white,
     borderWidth: 1,

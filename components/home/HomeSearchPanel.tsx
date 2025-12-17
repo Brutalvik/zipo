@@ -14,6 +14,7 @@ import DateTimePicker, {
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 import DaysPickerModal from "@/components/DaysPickerModal";
 import { addDays, formatDateTime } from "@/lib/date";
+import AndroidDateTimeSheet from "@/components/home/AndroidDateTimeSheet";
 
 export type HomeSearchState = {
   location: string;
@@ -53,6 +54,10 @@ export default function HomeSearchPanel({
   );
 
   const openPicker = () => {
+    if (Platform.OS === "android") {
+      setPickerOpen(true);
+      return;
+    }
     setTempDate(value.pickupAt);
     setTempTime(value.pickupAt);
     setPickerOpen(true);
@@ -126,13 +131,15 @@ export default function HomeSearchPanel({
       </Pressable>
 
       {/* Android native picker */}
-      {Platform.OS === "android" && pickerOpen ? (
-        <DateTimePicker
+      {Platform.OS === "android" ? (
+        <AndroidDateTimeSheet
+          visible={pickerOpen}
           value={value.pickupAt}
-          mode="datetime"
-          display="default"
-          onChange={onAndroidChange}
-          minimumDate={new Date()}
+          onClose={() => setPickerOpen(false)}
+          onConfirm={(merged) => {
+            onChange({ ...value, pickupAt: merged });
+            setPickerOpen(false);
+          }}
         />
       ) : null}
 

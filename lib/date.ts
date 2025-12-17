@@ -17,7 +17,7 @@ export function formatDateTime(d: Date) {
 }
 
 export function addDays(d: Date, days: number) {
-  const next = new Date(d);
-  next.setDate(next.getDate() + days);
-  return next;
+  const out = new Date(d.getTime());
+  out.setDate(out.getDate() + days);
+  return out;
 }
