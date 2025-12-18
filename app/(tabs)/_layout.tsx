@@ -11,7 +11,7 @@ export default function GuestTabsLayout() {
       )}
     >
       <Tabs.Screen name="index" />
-      <Tabs.Screen name="search" />
+      <Tabs.Screen name="nearby" />
       <Tabs.Screen name="inbox" />
       <Tabs.Screen name="notifications" />
       <Tabs.Screen name="profile" />

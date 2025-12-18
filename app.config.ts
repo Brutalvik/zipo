@@ -7,6 +7,22 @@ const config: ExpoConfig = {
   version: "1.0.0",
   scheme: "zipo",
 
+  ios: {
+    bundleIdentifier: "com.zipo.app",
+    config: {
+      googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_KEY,
+    },
+  },
+
+  android: {
+    package: "com.zipo.app",
+    config: {
+      googleMaps: {
+        apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_KEY,
+      },
+    },
+  },
+
   extra: {
     firebaseConfig: {
       apiKey: process.env.FIREBASE_API_KEY,

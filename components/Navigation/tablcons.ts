@@ -1,4 +1,4 @@
-export type IconFamily = "feather" | "material";
+export type IconFamily = "feather" | "material" | "fontawesome";
 
 export type TabIcon = {
   family: IconFamily;

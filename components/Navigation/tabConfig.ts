@@ -6,9 +6,9 @@ export const GUEST_TAB_CONFIG: TabConfig = {
     icon: { family: "feather", name: "home" },
     label: "Home",
   },
-  search: {
-    icon: { family: "feather", name: "search" },
-    label: "Search",
+  nearby: {
+    icon: { family: "fontawesome", name: "map-pin" },
+    label: "Nearby",
   },
   inbox: {
     icon: { family: "feather", name: "mail" },
