@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import * as Location from "expo-location";
@@ -49,10 +49,7 @@ function titleCaseCity(input: string) {
 }
 
 function bboxFromRadiusKm(lat: number, lng: number, radiusKm: number) {
-  // 1 deg lat ≈ 111km
   const dLat = radiusKm / 111;
-
-  // 1 deg lng ≈ 111km * cos(lat)
   const cos = Math.cos((lat * Math.PI) / 180);
   const dLng = radiusKm / (111 * Math.max(0.0001, cos));
 
@@ -65,7 +62,6 @@ function bboxFromRadiusKm(lat: number, lng: number, radiusKm: number) {
 }
 
 function regionFromRadius(lat: number, lng: number, radiusKm: number): Region {
-  // Keep zoom stable + sane (never world view)
   const latDelta = Math.min(1.2, Math.max(0.02, (radiusKm / 111) * 2.4));
   const cos = Math.cos((lat * Math.PI) / 180);
   const lngDelta = Math.min(
@@ -81,6 +77,8 @@ function regionFromRadius(lat: number, lng: number, radiusKm: number): Region {
   };
 }
 
+type SearchMode = "gps" | "city";
+
 export default function NearbyScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const mapRef = useRef<MapView>(null);
@@ -89,14 +87,22 @@ export default function NearbyScreen() {
 
   const [isLoading, setIsLoading] = useState(false);
 
+  // permission + real user location
   const [locAllowed, setLocAllowed] = useState<boolean | null>(null);
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
-  const [cityLabel, setCityLabel] = useState<string>("");
 
-  // ✅ UI slider value (updates smoothly while sliding)
+  // search center (either GPS or city)
+  const [centerLat, setCenterLat] = useState<number | null>(null);
+  const [centerLng, setCenterLng] = useState<number | null>(null);
+
+  // labels
+  const [gpsCityLabel, setGpsCityLabel] = useState<string>("");
+  const [mode, setMode] = useState<SearchMode>("gps");
+  const [cityQuery, setCityQuery] = useState<string>("");
+
+  // slider UI / committed
   const [radiusUiKm, setRadiusUiKm] = useState<number>(10);
-  // ✅ committed radius (only this triggers fetch + map zoom)
   const [radiusKm, setRadiusKm] = useState<number>(10);
   const MAX_RADIUS = 50;
 
@@ -111,54 +117,6 @@ export default function NearbyScreen() {
         Number.isFinite(c.pickup.lng)
     );
   }, [cars]);
-
-  const requestAndLoadLocation = useCallback(async () => {
-    try {
-      const perm = await Location.requestForegroundPermissionsAsync();
-      const granted = perm.status === "granted";
-      setLocAllowed(granted);
-      if (!granted) return;
-
-      // Prefer last known first (fast), then current
-      const last = await Location.getLastKnownPositionAsync();
-      const pos =
-        last ??
-        (await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        }));
-
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-
-      setUserLat(lat);
-      setUserLng(lng);
-
-      // Zoom immediately to user (fixes “continent” view)
-      requestAnimationFrame(() => {
-        mapRef.current?.animateToRegion(
-          regionFromRadius(lat, lng, radiusKm),
-          250
-        );
-      });
-
-      const res = await Location.reverseGeocodeAsync({
-        latitude: lat,
-        longitude: lng,
-      });
-      const first = res?.[0];
-
-      const cityGuess =
-        first?.city ||
-        first?.subregion ||
-        first?.region ||
-        first?.district ||
-        "";
-
-      setCityLabel(titleCaseCity(cityGuess) || "Your area");
-    } catch {
-      setLocAllowed(false);
-    }
-  }, [radiusKm]);
 
   const fetchCarsForRadius = useCallback(
     async (lat: number, lng: number, rKm: number) => {
@@ -201,24 +159,114 @@ export default function NearbyScreen() {
     [API_BASE]
   );
 
-  // initial boot: ask location
+  const requestAndLoadLocation = useCallback(async () => {
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      const granted = perm.status === "granted";
+      setLocAllowed(granted);
+      if (!granted) return;
+
+      const last = await Location.getLastKnownPositionAsync();
+      const pos =
+        last ??
+        (await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        }));
+
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      setUserLat(lat);
+      setUserLng(lng);
+
+      // GPS mode search center becomes user coords
+      setCenterLat(lat);
+      setCenterLng(lng);
+
+      requestAnimationFrame(() => {
+        mapRef.current?.animateToRegion(
+          regionFromRadius(lat, lng, radiusKm),
+          250
+        );
+      });
+
+      const res = await Location.reverseGeocodeAsync({
+        latitude: lat,
+        longitude: lng,
+      });
+      const first = res?.[0];
+
+      const cityGuess =
+        first?.city ||
+        first?.subregion ||
+        first?.region ||
+        first?.district ||
+        "";
+
+      setGpsCityLabel(titleCaseCity(cityGuess) || "Your area");
+    } catch {
+      setLocAllowed(false);
+    }
+  }, [radiusKm]);
+
+  // ✅ forward-geocode typed city -> set center -> fetch map
+  const geocodeCityAndRefresh = useCallback(
+    async (rawCity: string) => {
+      const city = rawCity.trim();
+      if (!city) return;
+
+      try {
+        // You can bias Canada (helps results)
+        const query = city.toLowerCase().includes("canada")
+          ? city
+          : `${city}, Canada`;
+
+        const results = await Location.geocodeAsync(query);
+        const first = results?.[0];
+
+        if (!first) {
+          console.warn("No geocode results for city:", city);
+          setCars([]); // optional: keep old cars if you prefer
+          return;
+        }
+
+        const lat = first.latitude;
+        const lng = first.longitude;
+
+        setMode("city");
+        setCenterLat(lat);
+        setCenterLng(lng);
+
+        requestAnimationFrame(() => {
+          mapRef.current?.animateToRegion(
+            regionFromRadius(lat, lng, radiusKm),
+            250
+          );
+        });
+
+        await fetchCarsForRadius(lat, lng, radiusKm);
+      } catch (e) {
+        console.warn("City geocode failed:", e);
+      }
+    },
+    [fetchCarsForRadius, radiusKm]
+  );
+
+  // initial boot
   useEffect(() => {
     requestAndLoadLocation();
   }, [requestAndLoadLocation]);
 
-  // ✅ Fetch + zoom only when committed radius changes (NOT while sliding)
+  // when radius changes, refetch for current center (gps OR city)
   useEffect(() => {
-    if (userLat == null || userLng == null) return;
+    if (centerLat == null || centerLng == null) return;
 
-    // zoom to radius around user
     mapRef.current?.animateToRegion(
-      regionFromRadius(userLat, userLng, radiusKm),
+      regionFromRadius(centerLat, centerLng, radiusKm),
       250
     );
-
-    // fetch cars for bbox
-    fetchCarsForRadius(userLat, userLng, radiusKm);
-  }, [userLat, userLng, radiusKm, fetchCarsForRadius]);
+    fetchCarsForRadius(centerLat, centerLng, radiusKm);
+  }, [centerLat, centerLng, radiusKm, fetchCarsForRadius]);
 
   const headerTitle = useMemo(() => {
     if (locAllowed === false) return "Location needed";
@@ -227,6 +275,22 @@ export default function NearbyScreen() {
     if (n >= 50) return "50+ cars found nearby";
     return `${n} cars found nearby`;
   }, [carsWithCoords.length, locAllowed]);
+
+  const subtitle = useMemo(() => {
+    if (locAllowed === false) return "Enable location to see nearby cars.";
+    if (mode === "city") {
+      const label = titleCaseCity(cityQuery.trim());
+      return label
+        ? `Showing cars in ${label} • within ${radiusKm} km`
+        : `Within ${radiusKm} km`;
+    }
+    return `Showing results within ${radiusKm} km`;
+  }, [locAllowed, mode, cityQuery, radiusKm]);
+
+  const pillValue = useMemo(() => {
+    if (mode === "city") return cityQuery;
+    return gpsCityLabel; // shows detected city but user can type to switch
+  }, [mode, cityQuery, gpsCityLabel]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -246,20 +310,54 @@ export default function NearbyScreen() {
         </View>
       </View>
 
-      {/* City pill + filters */}
+      {/* City input + filter */}
       <View style={styles.searchRow}>
-        <Pressable
-          onPress={requestAndLoadLocation}
-          style={[styles.cityPill, SHADOW_CARD]}
-          accessibilityRole="button"
-        >
+        <View style={[styles.cityPill, SHADOW_CARD]}>
           <Feather name="map-pin" size={16} color={COLORS.muted} />
-          <Text style={styles.cityText} numberOfLines={1}>
-            {cityLabel || "Finding your location…"}
-          </Text>
-          <View style={{ flex: 1 }} />
-          <Feather name="refresh-cw" size={14} color={COLORS.muted} />
-        </Pressable>
+
+          <TextInput
+            value={pillValue}
+            onChangeText={(t) => {
+              // if they start typing, we enter city mode and keep text
+              if (mode !== "city") setMode("city");
+              setCityQuery(t);
+            }}
+            placeholder="Search a city (e.g., Calgary)"
+            placeholderTextColor="#9CA3AF"
+            style={styles.cityInput}
+            returnKeyType="search"
+            autoCapitalize="words"
+            selectTextOnFocus={mode === "gps"}
+            onSubmitEditing={() => geocodeCityAndRefresh(cityQuery)}
+          />
+
+          {/* 🔁 double-circle behavior: return to user GPS */}
+          <Pressable
+            onPress={() => {
+              setMode("gps");
+              setCityQuery("");
+              // restore center to user location, otherwise refresh GPS
+              if (userLat != null && userLng != null) {
+                setCenterLat(userLat);
+                setCenterLng(userLng);
+                requestAnimationFrame(() => {
+                  mapRef.current?.animateToRegion(
+                    regionFromRadius(userLat, userLng, radiusKm),
+                    250
+                  );
+                });
+                fetchCarsForRadius(userLat, userLng, radiusKm);
+              } else {
+                requestAndLoadLocation();
+              }
+            }}
+            style={styles.gpsBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Use my location"
+          >
+            <Feather name="crosshair" size={16} color={COLORS.muted} />
+          </Pressable>
+        </View>
 
         <Pressable
           onPress={() => {
@@ -275,14 +373,10 @@ export default function NearbyScreen() {
       {/* Count + subtitle */}
       <View style={styles.resultsBlock}>
         <Text style={styles.resultsTitle}>{headerTitle}</Text>
-        <Text style={styles.resultsSub}>
-          {locAllowed === false
-            ? "Enable location to see nearby cars."
-            : `Showing results within ${radiusKm} km`}
-        </Text>
+        <Text style={styles.resultsSub}>{subtitle}</Text>
       </View>
 
-      {/* Radius slider */}
+      {/* Radius slider (still works for city mode too) */}
       <View style={styles.radiusCard}>
         <View style={styles.radiusRow}>
           <Text style={styles.radiusLabel}>Radius</Text>
@@ -297,8 +391,8 @@ export default function NearbyScreen() {
           minimumTrackTintColor={COLORS.black}
           maximumTrackTintColor={"rgba(0,0,0,0.14)"}
           thumbTintColor={COLORS.black}
-          onValueChange={(v) => setRadiusUiKm(v)} // ✅ smooth UI
-          onSlidingComplete={(v) => setRadiusKm(v)} // ✅ only commit once (prevents crash)
+          onValueChange={(v) => setRadiusUiKm(v)}
+          onSlidingComplete={(v) => setRadiusKm(v)}
         />
       </View>
 
@@ -308,7 +402,6 @@ export default function NearbyScreen() {
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
-          // keep an OK default so it doesn't start world-view
           initialRegion={{
             latitude: 51.0447,
             longitude: -114.0719,
@@ -339,15 +432,15 @@ export default function NearbyScreen() {
           ))}
         </MapView>
 
-        {/* Refresh button (pushed up more) */}
+        {/* Refresh button */}
         <Pressable
           onPress={() => {
-            if (userLat != null && userLng != null) {
+            if (centerLat != null && centerLng != null) {
               mapRef.current?.animateToRegion(
-                regionFromRadius(userLat, userLng, radiusKm),
+                regionFromRadius(centerLat, centerLng, radiusKm),
                 250
               );
-              fetchCarsForRadius(userLat, userLng, radiusKm);
+              fetchCarsForRadius(centerLat, centerLng, radiusKm);
             } else {
               requestAndLoadLocation();
             }
@@ -434,13 +527,24 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     borderRadius: RADIUS.xl,
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
   },
-  cityText: {
+
+  cityInput: {
+    flex: 1,
     fontSize: 14,
     fontWeight: "800",
     color: COLORS.text,
-    flexShrink: 1,
+    paddingVertical: 0,
+  },
+
+  gpsBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   filterBtn: {
@@ -492,7 +596,7 @@ const styles = StyleSheet.create({
   refreshFab: {
     position: "absolute",
     right: 12,
-    bottom: 54, // ✅ higher than before
+    bottom: 54,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -504,6 +608,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   refreshFabText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
+
   priceMarker: {
     backgroundColor: "#111827",
     paddingHorizontal: 10,
@@ -517,9 +622,5 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 6,
   },
-  priceMarkerText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "900",
-  },
+  priceMarkerText: { color: "#fff", fontSize: 12, fontWeight: "900" },
 });
