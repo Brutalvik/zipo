@@ -37,7 +37,6 @@ type ApiCar = {
   vehicleType?: string | null;
   transmission?: string | null;
   seats?: number | null;
-  hasImage?: boolean;
   address?: {
     countryCode?: string | null;
     city?: string | null;
@@ -50,6 +49,9 @@ type ApiCar = {
   };
 };
 
+const PRICE_MAX = 300; // 300 means "300+ (no cap)" in your UX
+const RATING_ANY = 5.0; // 5.0 means "Any" in your UX
+
 function titleCaseCity(input: string) {
   const s = (input || "").trim();
   if (!s) return "";
@@ -60,9 +62,7 @@ function titleCaseCity(input: string) {
 }
 
 function bboxFromRadiusKm(lat: number, lng: number, radiusKm: number) {
-  // 1 deg lat ≈ 111km
   const dLat = radiusKm / 111;
-  // 1 deg lng ≈ 111km * cos(lat)
   const cos = Math.cos((lat * Math.PI) / 180);
   const dLng = radiusKm / (111 * Math.max(0.0001, cos));
 
@@ -75,7 +75,6 @@ function bboxFromRadiusKm(lat: number, lng: number, radiusKm: number) {
 }
 
 function regionFromRadius(lat: number, lng: number, radiusKm: number): Region {
-  // stable + sane (never world view)
   const latDelta = Math.min(1.2, Math.max(0.02, (radiusKm / 111) * 2.4));
   const cos = Math.cos((lat * Math.PI) / 180);
   const lngDelta = Math.min(
@@ -93,25 +92,52 @@ function regionFromRadius(lat: number, lng: number, radiusKm: number): Region {
 
 function filterToChips(f: NearbyFilters): string[] {
   const chips: string[] = [];
+
   if (f.vehicleType) chips.push(f.vehicleType);
   if (f.transmission) chips.push(f.transmission);
   if (f.fuelType) chips.push(f.fuelType);
-  if (f.minSeats != null) chips.push(`${f.minSeats}+ seats`);
-  if (f.minRating != null) chips.push(`${f.minRating.toFixed(1)}★+`);
-  if (f.onlyWithPhotos) chips.push("Photos only");
-  if (f.maxPriceEnabled) {
-    chips.push(
-      f.maxPricePerDay >= 300 ? "≤ $Max/day" : `≤ $${f.maxPricePerDay}/day`
-    );
+
+  // Seats: show "5+ seats" when set to 5
+  if (f.minSeats != null) {
+    chips.push(f.minSeats >= 5 ? "5+ seats" : `${f.minSeats}+ seats`);
   }
+
+  // Rating: default 5.0 is "Any" => do NOT show chip
+  if (typeof f.minRating === "number" && f.minRating < RATING_ANY) {
+    chips.push(`${f.minRating.toFixed(1)}★+`);
+  }
+
+  // Price: 300 means "300+ (no cap)" => do NOT show chip
+  if (typeof f.maxPricePerDay === "number" && f.maxPricePerDay < PRICE_MAX) {
+    chips.push(`≤ $${f.maxPricePerDay}/day`);
+  }
+
   return chips;
+}
+
+function isDefaultFilters(f: NearbyFilters) {
+  // Treat 5.0 as "Any" and 300 as "300+ (no cap)"
+  const ratingIsDefault = (f.minRating ?? RATING_ANY) >= RATING_ANY;
+  const priceIsDefault = (f.maxPricePerDay ?? PRICE_MAX) >= PRICE_MAX;
+
+  return (
+    (f.vehicleType ?? null) == null &&
+    (f.transmission ?? null) == null &&
+    (f.fuelType ?? null) == null &&
+    (f.minSeats ?? null) == null &&
+    ratingIsDefault &&
+    priceIsDefault
+  );
 }
 
 export default function NearbyScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const mapRef = useRef<MapView>(null);
 
-  const API_BASE = (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, "");
+  const API_BASE = useMemo(
+    () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
+    []
+  );
 
   const [isLoading, setIsLoading] = useState(false);
 
@@ -119,21 +145,21 @@ export default function NearbyScreen() {
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
 
-  // City editing + persist
   const [cityInput, setCityInput] = useState<string>("");
-  const [cityLabel, setCityLabel] = useState<string>(""); // pill text (chips)
+  const [cityLabel, setCityLabel] = useState<string>("");
   const [isUsingUserLocation, setIsUsingUserLocation] = useState(true);
 
-  // Slider values (smooth UI vs committed)
   const [radiusUiKm, setRadiusUiKm] = useState<number>(10);
   const [radiusKm, setRadiusKm] = useState<number>(10);
   const MAX_RADIUS = 50;
 
   const [cars, setCars] = useState<ApiCar[]>([]);
 
-  // Filters
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<NearbyFilters>(DEFAULT_FILTERS);
+
+  const activeFilterChips = useMemo(() => filterToChips(filters), [filters]);
+  const canClear = useMemo(() => !isDefaultFilters(filters), [filters]);
 
   const carsWithCoords = useMemo(() => {
     return cars.filter(
@@ -145,35 +171,24 @@ export default function NearbyScreen() {
     );
   }, [cars]);
 
-  // Apply filters to current list
   const filteredCars = useMemo(() => {
     let list = cars;
 
-    if (filters.onlyWithPhotos) {
-      list = list.filter((c) => !!c.hasImage);
-    }
-
     if (filters.vehicleType) {
-      list = list.filter(
-        (c) =>
-          (c.vehicleType ?? "").toLowerCase() ===
-          filters.vehicleType!.toLowerCase()
-      );
+      const vt = filters.vehicleType.toLowerCase();
+      list = list.filter((c) => (c.vehicleType ?? "").toLowerCase() === vt);
     }
 
     if (filters.transmission) {
-      list = list.filter(
-        (c) =>
-          (c.transmission ?? "").toLowerCase() ===
-          filters.transmission!.toLowerCase()
-      );
+      const tr = filters.transmission.toLowerCase();
+      list = list.filter((c) => (c.transmission ?? "").toLowerCase() === tr);
     }
 
-    // Fuel type is UI-only unless your API includes it; if not present, it simply won't match.
     if (filters.fuelType) {
+      const ft = filters.fuelType.toLowerCase();
       list = list.filter((c: any) => {
-        const ft = String(c?.fuelType ?? c?.fuel_type ?? "").toLowerCase();
-        return ft === filters.fuelType!.toLowerCase();
+        const val = String(c?.fuelType ?? c?.fuel_type ?? "").toLowerCase();
+        return val === ft;
       });
     }
 
@@ -181,11 +196,19 @@ export default function NearbyScreen() {
       list = list.filter((c) => (c.seats ?? 0) >= filters.minSeats!);
     }
 
-    if (filters.minRating != null) {
-      list = list.filter((c) => (c.rating ?? 0) >= filters.minRating!);
+    // Rating: 5.0 means "Any" => do NOT filter
+    if (
+      typeof filters.minRating === "number" &&
+      filters.minRating < RATING_ANY
+    ) {
+      list = list.filter((c) => (c.rating ?? 0) >= filters.minRating);
     }
 
-    if (filters.maxPriceEnabled) {
+    // Price: 300 means "300+ (no cap)" => do NOT filter
+    if (
+      typeof filters.maxPricePerDay === "number" &&
+      filters.maxPricePerDay < PRICE_MAX
+    ) {
       list = list.filter(
         (c) =>
           (c.pricePerDay ?? Number.POSITIVE_INFINITY) <= filters.maxPricePerDay
@@ -204,8 +227,6 @@ export default function NearbyScreen() {
         Number.isFinite(c.pickup.lng)
     );
   }, [filteredCars]);
-
-  const activeFilterChips = useMemo(() => filterToChips(filters), [filters]);
 
   const requestAndLoadLocation = useCallback(async () => {
     try {
@@ -228,7 +249,6 @@ export default function NearbyScreen() {
       setUserLng(lng);
       setIsUsingUserLocation(true);
 
-      // label city
       const res = await Location.reverseGeocodeAsync({
         latitude: lat,
         longitude: lng,
@@ -245,7 +265,6 @@ export default function NearbyScreen() {
       setCityLabel(label);
       setCityInput(label);
 
-      // zoom now (prevents continent view)
       requestAnimationFrame(() => {
         mapRef.current?.animateToRegion(
           regionFromRadius(lat, lng, radiusKm),
@@ -302,7 +321,6 @@ export default function NearbyScreen() {
     [API_BASE]
   );
 
-  // Convert typed city -> coordinates (no new endpoint)
   const geocodeCityAndSearch = useCallback(
     async (city: string) => {
       const cleaned = city.trim();
@@ -340,12 +358,10 @@ export default function NearbyScreen() {
     [fetchCarsForRadius, radiusKm]
   );
 
-  // initial boot
   useEffect(() => {
     requestAndLoadLocation();
   }, [requestAndLoadLocation]);
 
-  // fetch + zoom when committed radius changes
   useEffect(() => {
     if (userLat == null || userLng == null) return;
     mapRef.current?.animateToRegion(
@@ -399,7 +415,6 @@ export default function NearbyScreen() {
             onSubmitEditing={() => geocodeCityAndSearch(cityInput)}
           />
 
-          {/* back to user location */}
           <Pressable
             onPress={() => requestAndLoadLocation()}
             style={styles.circleBtn}
@@ -447,12 +462,14 @@ export default function NearbyScreen() {
               </View>
             ))}
 
-            <Pressable
-              onPress={() => setFilters(DEFAULT_FILTERS)}
-              style={[styles.clearChip, SHADOW_CARD]}
-            >
-              <Text style={styles.clearChipText}>Clear</Text>
-            </Pressable>
+            {canClear ? (
+              <Pressable
+                onPress={() => setFilters(DEFAULT_FILTERS)}
+                style={[styles.clearChip, SHADOW_CARD]}
+              >
+                <Text style={styles.clearChipText}>Clear</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </View>
@@ -490,7 +507,7 @@ export default function NearbyScreen() {
             longitudeDelta: 0.15,
           }}
         >
-          {/* Blue dot (custom) */}
+          {/* Blue dot */}
           {userLat != null && userLng != null ? (
             <Marker
               coordinate={{ latitude: userLat, longitude: userLng }}
@@ -550,7 +567,7 @@ export default function NearbyScreen() {
         visible={filtersOpen}
         initial={filters}
         onClose={() => setFiltersOpen(false)}
-        onApply={(next: any) => {
+        onApply={(next: NearbyFilters) => {
           setFilters(next);
           setFiltersOpen(false);
         }}
@@ -732,7 +749,6 @@ const styles = StyleSheet.create({
   },
   refreshFabText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
 
-  // Blue dot like Google Maps
   blueDotOuter: {
     width: 15,
     height: 15,
@@ -750,7 +766,6 @@ const styles = StyleSheet.create({
     borderColor: "#fff",
   },
 
-  // Price marker
   priceMarker: {
     backgroundColor: "#111827",
     paddingHorizontal: 10,
