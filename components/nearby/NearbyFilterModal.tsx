@@ -1,5 +1,4 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Animated } from "react-native";
 import {
   Modal,
   Pressable,
@@ -8,6 +7,7 @@ import {
   View,
   Platform,
   ScrollView,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Slider from "@react-native-community/slider";
@@ -15,22 +15,12 @@ import { Feather, FontAwesome } from "@expo/vector-icons";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
 export type NearbyFilters = {
-  vehicleType: string | null;
-  transmission: "Automatic" | "Manual" | null;
-  fuelType: "Gas" | "Diesel" | "Hybrid" | "Electric" | null;
-  minSeats: number | null;
-
-  // NOTE: "Any" is represented as 5.0 (max) in UI + logic
-  minRating: number; // 0..5, step 0.5 (default 5.0)
-
-  // Price cap: 300 means "300+ (no cap)"
-  maxPricePerDay: number;
-
-  // kept for compatibility with any existing imports; not used in UI
-  maxPriceEnabled?: boolean;
-
-  // removed from UI; kept for compatibility
-  onlyWithPhotos?: boolean;
+  vehicleType: string | null; // null = Any
+  transmission: "Automatic" | "Manual" | null; // null = Any
+  fuelType: "Gas" | "Diesel" | "Hybrid" | "Electric" | null; // null = Any
+  minSeats: number | null; // null = Any, 5 means 5+
+  minRating: number; // 5.0 means "Any"
+  maxPricePerDay: number; // 300 means "300+ (no cap)"
 };
 
 const VEHICLE_TYPES = [
@@ -49,28 +39,38 @@ const FUEL_TYPES = ["Any", "Gas", "Diesel", "Hybrid", "Electric"] as const;
 
 const MAX_SEATS_FILTER = 5;
 
-// Price range UI constants
 const PRICE_MIN = 20;
-const PRICE_MAX = 300;
+const PRICE_MAX = 300; // 300 => "300+ (no cap)"
 
-function chipSelected(val: string, selected: string) {
-  return val.toLowerCase() === selected.toLowerCase();
-}
+const BARS = 34;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-function isFiltersEmpty(f: NearbyFilters) {
-  const priceNoCap = (f.maxPricePerDay ?? PRICE_MAX) >= PRICE_MAX;
-  const seatsAny = f.minSeats == null;
-  const typeAny = f.vehicleType == null;
-  const transAny = f.transmission == null;
-  const fuelAny = f.fuelType == null;
-  const ratingAny = (f.minRating ?? 5) >= 5;
-
-  return typeAny && transAny && fuelAny && seatsAny && ratingAny && priceNoCap;
+function chipSelected(val: string, selected: string) {
+  return val.toLowerCase() === selected.toLowerCase();
 }
+
+function isFiltersEmpty(f: NearbyFilters) {
+  return (
+    f.vehicleType == null &&
+    f.transmission == null &&
+    f.fuelType == null &&
+    f.minSeats == null &&
+    f.minRating >= 5 &&
+    f.maxPricePerDay >= PRICE_MAX
+  );
+}
+
+export const DEFAULT_FILTERS: NearbyFilters = {
+  vehicleType: null,
+  transmission: null,
+  fuelType: null,
+  minSeats: null,
+  minRating: 5.0, // 5.0★ means Any
+  maxPricePerDay: PRICE_MAX, // 300+ means show all cars (no cap)
+};
 
 export default function NearbyFiltersModal({
   visible,
@@ -84,29 +84,6 @@ export default function NearbyFiltersModal({
   onApply: (next: NearbyFilters) => void;
 }) {
   const [draft, setDraft] = useState<NearbyFilters>(initial);
-  const priceValue = clamp(
-    draft.maxPricePerDay ?? PRICE_MAX,
-    PRICE_MIN,
-    PRICE_MAX
-  );
-
-  const [priceTrackW, setPriceTrackW] = useState(0);
-  const thumbSize = 28; // approximate thumb width (good enough)
-  const padX = 8; // horizontal padding inside slider wrap
-
-  const priceAnim = useRef(new Animated.Value(priceValue)).current;
-
-  const maxPillText = useMemo(() => {
-    if (priceValue >= PRICE_MAX) return `$${PRICE_MAX}+`;
-    return `$${priceValue}`;
-  }, [priceValue]);
-
-  const maxPillTranslateX = useMemo(() => {
-    const usable = Math.max(0, priceTrackW - thumbSize - padX * 2);
-    // clamp ratio 0..1
-    const ratio = (priceValue - PRICE_MIN) / (PRICE_MAX - PRICE_MIN);
-    return padX + usable * Math.max(0, Math.min(1, ratio));
-  }, [priceValue, priceTrackW]);
 
   React.useEffect(() => {
     if (visible) setDraft(initial);
@@ -114,27 +91,45 @@ export default function NearbyFiltersModal({
 
   const canClear = useMemo(() => !isFiltersEmpty(draft), [draft]);
 
-  // histogram bars (static distribution; “filled” portion animates via value)
-  const histBars = useMemo(() => {
-    const base = [
-      2, 3, 4, 6, 5, 7, 9, 12, 10, 14, 18, 12, 20, 26, 18, 16, 22, 19, 17, 21,
-      15, 13, 11, 9, 8, 7, 6, 5, 4, 4,
-    ];
-    const max = Math.max(...base);
-    return base.map((v) => v / max);
+  // ---- Price range (bars + slider + moving max pill) ----
+  const [priceTrackW, setPriceTrackW] = useState(0);
+  const thumbSize = 28; // good-enough thumb width for iOS+Android
+  const padX = 10;
+
+  const priceRatio = useMemo(() => {
+    return (draft.maxPricePerDay - PRICE_MIN) / (PRICE_MAX - PRICE_MIN);
+  }, [draft.maxPricePerDay]);
+
+  const activeBars = useMemo(() => {
+    return Math.round(clamp(priceRatio, 0, 1) * (BARS - 1));
+  }, [priceRatio]);
+
+  const maxPillText = useMemo(() => {
+    if (draft.maxPricePerDay >= PRICE_MAX) return `$${PRICE_MAX}+`;
+    return `$${draft.maxPricePerDay}`;
+  }, [draft.maxPricePerDay]);
+
+  const maxPillTranslateX = useMemo(() => {
+    const usable = Math.max(0, priceTrackW - thumbSize - padX * 2);
+    const ratio = clamp(priceRatio, 0, 1);
+    return padX + usable * ratio;
+  }, [priceRatio, priceTrackW]);
+
+  const barHeights = useMemo(() => {
+    // simple pleasing distribution (peaks near middle)
+    const h: number[] = [];
+    for (let i = 0; i < BARS; i++) {
+      const t = i / (BARS - 1);
+      const bell = Math.exp(-Math.pow((t - 0.5) / 0.22, 2)); // 0..1
+      const px = 8 + bell * 28; // 8..36
+      h.push(px);
+    }
+    return h;
   }, []);
 
-  // map priceValue into a "filled bar count"
-  const filledCount = useMemo(() => {
-    const n = histBars.length;
-    const t = (priceValue - PRICE_MIN) / (PRICE_MAX - PRICE_MIN); // 0..1
-    return Math.max(0, Math.min(n, Math.round(t * n)));
-  }, [priceValue, histBars.length]);
-
   const ratingLabel = useMemo(() => {
-    // default 5.0 means "Any" (show star icon + 5.0 as per instruction)
-    const r = clamp(draft.minRating ?? 5, 0, 5);
-    return r.toFixed(1);
+    // 5.0 means Any, but UI should show "5.0★" (your requirement)
+    return draft.minRating.toFixed(1);
   }, [draft.minRating]);
 
   return (
@@ -169,7 +164,6 @@ export default function NearbyFiltersModal({
           </Pressable>
         </View>
 
-        {/* Scrollable content */}
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.contentContainer}
@@ -181,9 +175,9 @@ export default function NearbyFiltersModal({
             <View style={styles.chipsWrap}>
               {VEHICLE_TYPES.map((t) => {
                 const selected =
-                  (t === "Any" && draft?.vehicleType == null) ||
-                  (draft?.vehicleType != null &&
-                    chipSelected(t, draft?.vehicleType));
+                  (t === "Any" && draft.vehicleType == null) ||
+                  (draft.vehicleType != null &&
+                    chipSelected(t, draft.vehicleType));
 
                 return (
                   <Pressable
@@ -291,14 +285,22 @@ export default function NearbyFiltersModal({
           <View style={[styles.card, SHADOW_CARD]}>
             <View style={styles.twoColRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Seats</Text>
+                <Text style={styles.cardTitle}>Minimum seats</Text>
+                <Text style={styles.bigInline}>
+                  {draft.minSeats == null
+                    ? "Any"
+                    : draft.minSeats >= MAX_SEATS_FILTER
+                    ? "5+"
+                    : String(draft.minSeats)}
+                </Text>
+
                 <View style={styles.stepperRow}>
                   <Pressable
                     onPress={() =>
                       setDraft((p) => {
                         const cur = p.minSeats;
                         if (cur == null) return p;
-                        if (cur === 1) return { ...p, minSeats: null };
+                        if (cur === 1) return { ...p, minSeats: null }; // 1 -> Any
                         return { ...p, minSeats: Math.max(1, cur - 1) };
                       })
                     }
@@ -312,18 +314,10 @@ export default function NearbyFiltersModal({
                     <Feather name="minus" size={18} color={COLORS.text} />
                   </Pressable>
 
-                  <Text style={styles.inlineValue}>
-                    {draft.minSeats == null
-                      ? "Any"
-                      : draft.minSeats >= MAX_SEATS_FILTER
-                      ? "5+"
-                      : draft.minSeats}
-                  </Text>
-
                   <Pressable
                     onPress={() =>
                       setDraft((p) => {
-                        const cur = p.minSeats ?? 0;
+                        const cur = p.minSeats ?? 0; // Any -> 0
                         const next = Math.min(MAX_SEATS_FILTER, cur + 1);
                         return { ...p, minSeats: next < 1 ? 1 : next };
                       })
@@ -345,16 +339,20 @@ export default function NearbyFiltersModal({
               <View style={{ width: 14 }} />
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Min Rating</Text>
+                <Text style={styles.cardTitle}>Min rating</Text>
 
-                {/* default is 5.0 with star icon (represents Any) */}
                 <View style={styles.ratingValueRow}>
                   <Text style={styles.ratingValueText}>{ratingLabel}</Text>
-                  <FontAwesome name="star" size={14} color={COLORS.amber} />
+                  <FontAwesome
+                    name="star"
+                    size={14}
+                    color={COLORS.amber}
+                    style={{ marginTop: 1 }}
+                  />
                 </View>
 
                 <Slider
-                  value={draft.minRating ?? 5}
+                  value={draft.minRating}
                   minimumValue={0}
                   maximumValue={5}
                   step={0.5}
@@ -364,7 +362,8 @@ export default function NearbyFiltersModal({
                   onValueChange={(v) =>
                     setDraft((p) => ({
                       ...p,
-                      minRating: v, // keep 5.0 as "Any"
+                      // force 5.0 as "Any" default UX if they slide to end
+                      minRating: clamp(v, 0, 5),
                     }))
                   }
                 />
@@ -372,35 +371,33 @@ export default function NearbyFiltersModal({
             </View>
           </View>
 
-          {/* ✅ Price range: bars + slider tight, no circles, animated filled bars */}
+          {/* Price range */}
           <View style={[styles.card, SHADOW_CARD]}>
             <Text style={styles.cardTitle}>Price range</Text>
             <Text style={styles.helperText}>Set a maximum daily price.</Text>
 
             {/* Bars */}
-            <View style={styles.priceBarsWrap}>
-              <View style={styles.histRow}>
-                {histBars.map((h, i) => {
-                  const isFilled = i <= filledCount;
-                  return (
-                    <View
-                      key={`${i}`}
-                      style={[
-                        styles.histBar,
-                        {
-                          height: 10 + Math.round(h * 28),
-                          backgroundColor: isFilled
-                            ? "rgba(17,24,39,0.92)"
-                            : "rgba(17,24,39,0.10)",
-                        },
-                      ]}
-                    />
-                  );
-                })}
-              </View>
+            <View style={styles.barsWrap}>
+              {barHeights.map((h, i) => {
+                const isActive = i <= activeBars;
+                return (
+                  <View
+                    key={i}
+                    style={[
+                      styles.bar,
+                      {
+                        height: h,
+                        backgroundColor: isActive
+                          ? COLORS.black
+                          : "rgba(0,0,0,0.08)",
+                      },
+                    ]}
+                  />
+                );
+              })}
             </View>
 
-            {/* Slider directly under bars (no gap) */}
+            {/* Slider (tight under bars) */}
             <View
               style={styles.priceSliderWrap}
               onLayout={(e) => setPriceTrackW(e.nativeEvent.layout.width)}
@@ -417,46 +414,49 @@ export default function NearbyFiltersModal({
               </Animated.View>
 
               <Slider
-                value={priceValue}
+                value={draft.maxPricePerDay}
                 minimumValue={PRICE_MIN}
                 maximumValue={PRICE_MAX}
                 step={10}
                 minimumTrackTintColor={COLORS.black}
                 maximumTrackTintColor={"rgba(0,0,0,0.14)"}
                 thumbTintColor={COLORS.black}
-                onValueChange={(v) => {
-                  const vv = clamp(v, PRICE_MIN, PRICE_MAX);
-                  setDraft((p) => ({ ...p, maxPricePerDay: vv }));
-                  priceAnim.setValue(vv);
-                }}
+                onValueChange={(v) =>
+                  setDraft((p) => ({
+                    ...p,
+                    maxPricePerDay: clamp(v, PRICE_MIN, PRICE_MAX),
+                  }))
+                }
               />
             </View>
 
-            {/* Min/Max pills (fixed width, not stretched) */}
+            {/* Min / Max pills */}
             <View style={styles.minMaxRow}>
               <View style={styles.minMaxCol}>
                 <Text style={styles.minMaxLabel}>Minimum</Text>
-                <View style={styles.minMaxPill}>
-                  <Text style={styles.minMaxPillText}>${PRICE_MIN}</Text>
+                <View style={[styles.pricePill, SHADOW_CARD]}>
+                  <Text style={styles.pricePillText}>${PRICE_MIN}</Text>
                 </View>
               </View>
 
-              <View style={styles.minMaxColRight}>
-                <Text style={styles.minMaxLabelRight}>Maximum</Text>
-                <View style={styles.minMaxPill}>
-                  <Text style={styles.minMaxPillText}>${PRICE_MAX}+</Text>
+              <View style={[styles.minMaxCol, styles.minMaxColRight]}>
+                <Text style={styles.minMaxLabel}>Maximum</Text>
+                <View style={[styles.pricePill, SHADOW_CARD]}>
+                  <Text style={styles.pricePillText}>
+                    {draft.maxPricePerDay >= PRICE_MAX
+                      ? `$${PRICE_MAX}+`
+                      : `$${draft.maxPricePerDay}`}
+                  </Text>
                 </View>
               </View>
             </View>
           </View>
-
-          {/* ✅ removed: Only cars with photos */}
         </ScrollView>
 
         {/* Apply bar pinned */}
         <View style={styles.applyBar}>
           <Pressable
-            onPress={() => onApply(normalizeForApply(draft))}
+            onPress={() => onApply(draft)}
             style={[styles.applyBtn, SHADOW_CARD]}
             accessibilityRole="button"
           >
@@ -467,36 +467,6 @@ export default function NearbyFiltersModal({
     </Modal>
   );
 }
-
-/**
- * Ensures "300+" behavior:
- * - If slider is at 300, treat as NO CAP (so Nearby screen should not apply <= filter)
- */
-function normalizeForApply(d: NearbyFilters): NearbyFilters {
-  const v = clamp(d.maxPricePerDay ?? PRICE_MAX, PRICE_MIN, PRICE_MAX);
-  return {
-    ...d,
-    maxPricePerDay: v,
-    maxPriceEnabled: false, // kept for backward compatibility only
-    onlyWithPhotos: false,
-  };
-}
-
-export const DEFAULT_FILTERS: NearbyFilters = {
-  vehicleType: null,
-  transmission: null,
-  fuelType: null,
-  minSeats: null,
-
-  // Default is 5.0 with star icon meaning "Any"
-  minRating: 5.0,
-
-  // Default is 300 => "300+ (no cap)"
-  maxPricePerDay: PRICE_MAX,
-
-  maxPriceEnabled: false,
-  onlyWithPhotos: false,
-};
 
 const APPLY_BAR_HEIGHT = 18 + 10 + 14 + 14;
 
@@ -537,7 +507,6 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   cardTitle: { fontSize: 13, fontWeight: "900", color: COLORS.muted },
-
   helperText: {
     marginTop: 6,
     fontSize: 12,
@@ -559,23 +528,11 @@ const styles = StyleSheet.create({
   chipTextOff: { color: COLORS.text },
 
   twoColRow: { flexDirection: "row", alignItems: "flex-start" },
-  inlineValue: {
+  bigInline: {
     marginTop: 8,
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: "900",
     color: COLORS.text,
-  },
-  ratingValueRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-
-  ratingValueText: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: COLORS.text,
-    lineHeight: 22,
   },
 
   stepperRow: {
@@ -594,35 +551,43 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  stepBtnDisabled: {
-    opacity: 0.45,
+  stepBtnDisabled: { opacity: 0.45 },
+
+  ratingValueRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  ratingValueText: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: COLORS.text,
+    lineHeight: 22,
   },
 
-  // ---- Price range (tight bars + slider) ----
-  priceBarsWrap: {
+  // Bars
+  barsWrap: {
     marginTop: 12,
-    height: 46,
-    justifyContent: "flex-end",
-  },
-  histRow: {
-    height: 40,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",
   },
-  histBar: {
+  bar: {
     width: 6,
-    borderRadius: 4,
+    borderRadius: 999,
   },
+
+  // Slider tight under bars
   priceSliderWrap: {
-    marginTop: -2, // tight to bars (no gap)
+    marginTop: 2, // very close to bars
     paddingHorizontal: 2,
     position: "relative",
   },
 
   movingMaxPill: {
     position: "absolute",
-    top: -34, // sits just above slider
+    top: -40,
     left: 0,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -636,55 +601,47 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 5,
   },
-
   movingMaxPillText: {
     color: "#fff",
     fontSize: 12,
     fontWeight: "900",
   },
 
+  // Min/Max row - responsive (no fixed gap)
   minMaxRow: {
-    marginTop: 10,
+    marginTop: 12,
     flexDirection: "row",
     justifyContent: "space-between",
-  },
-  minMaxCol: {
-    flexShrink: 1,
     alignItems: "flex-start",
   },
-  minMaxColRight: {
+  minMaxCol: {
+    alignItems: "flex-start",
     flexShrink: 1,
+  },
+  minMaxColRight: {
     alignItems: "flex-end",
   },
   minMaxLabel: {
     fontSize: 12,
     fontWeight: "800",
     color: COLORS.muted,
-    marginBottom: 8,
   },
-  minMaxLabelRight: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: COLORS.muted,
-    marginBottom: 8,
-    textAlign: "right",
-  },
-  minMaxPill: {
-    alignSelf: "flex-start", // prevents stretching
+  pricePill: {
+    marginTop: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.10)",
-    backgroundColor: "#fff",
+    borderColor: COLORS.border,
+    alignSelf: "flex-start", // prevents wide pill on Android
   },
-  minMaxPillText: {
-    fontSize: 13,
+  pricePillText: {
+    fontSize: 14,
     fontWeight: "900",
     color: COLORS.text,
   },
 
-  // Apply bar pinned
   applyBar: {
     paddingHorizontal: 16,
     paddingTop: 10,
