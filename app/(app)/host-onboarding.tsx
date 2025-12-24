@@ -12,12 +12,14 @@ import {
   View,
   Switch,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
 import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 
 import Button from "@/components/Button/Button";
 import type {
@@ -28,12 +30,10 @@ import type {
 } from "@/redux/slices/hostSlice";
 
 import { useAuth } from "@/hooks/useAuth";
-import { useAppSelector } from "@/redux/hooks";
-import { selectHost } from "@/redux/slices/hostSlice";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks";
+import { selectHost, setHost } from "@/redux/slices/hostSlice";
+import { patchHostProfile } from "@/services/hostApi";
 
-// -------------------------
-// helpers
-// -------------------------
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -58,84 +58,90 @@ function parseYmd(s: string): Date | null {
 
 type Props = {
   initial?: Host | null;
-  onContinue?: (
-    data: Partial<Host> & {
-      license?: {
-        licenseNumber: string;
-        licenseCountry: string;
-        licenseRegion: string;
-        licenseExpiry: string;
-      };
-    }
-  ) => void;
+  onContinue?: (data: any) => void;
 };
 
 export default function HostOnboardingScreen({ initial, onContinue }: Props) {
-  // -------------------------
-  // compact onboarding fields (mapped to host object)
-  // -------------------------
+  const dispatch = useAppDispatch();
+  const router = useRouter();
 
   const { user } = useAuth();
   const host = useAppSelector(selectHost);
+
   const userDisplayName = user?.name || "";
 
-  const [displayName, setDisplayName] = useState<string>(userDisplayName ?? "");
-  console.log("USER: ", user);
+  const [saving, setSaving] = useState(false);
+
+  const [displayName, setDisplayName] = useState<string>(userDisplayName);
 
   const [hostType, setHostType] = useState<HostType>(
-    (initial?.host_type ?? "individual") as HostType
+    (initial?.host_type ?? host?.host_type ?? "individual") as HostType
   );
+
   const [businessName, setBusinessName] = useState(
-    (initial?.business_name ?? "").toString()
+    String(initial?.business_name ?? host?.business_name ?? "")
   );
 
   const [countryCode, setCountryCode] = useState(
-    (initial?.base_country_code ?? "CA").toString()
+    String(initial?.base_country_code ?? host?.base_country_code ?? "CA")
   );
-  const [city, setCity] = useState((initial?.base_city ?? "").toString());
-  const [area, setArea] = useState((initial?.base_area ?? "").toString());
+  const [city, setCity] = useState(
+    String(initial?.base_city ?? host?.base_city ?? "")
+  );
+  const [area, setArea] = useState(
+    String(initial?.base_area ?? host?.base_area ?? "")
+  );
 
   const [advanceNoticeHours, setAdvanceNoticeHours] = useState(
-    String(initial?.advance_notice_hours ?? 24)
+    String(initial?.advance_notice_hours ?? host?.advance_notice_hours ?? 24)
   );
 
   const [instantBookEnabled, setInstantBookEnabled] = useState(
-    Boolean(initial?.instant_book_enabled ?? false)
+    Boolean(
+      initial?.instant_book_enabled ?? host?.instant_book_enabled ?? false
+    )
   );
 
   const [minTripDays, setMinTripDays] = useState(
-    String(initial?.min_trip_days ?? 1)
+    String(initial?.min_trip_days ?? host?.min_trip_days ?? 1)
   );
-  const [maxTripDays, setMaxTripDays] = useState(
-    initial?.max_trip_days == null ? "" : String(initial.max_trip_days)
-  );
+
+  const [maxTripDays, setMaxTripDays] = useState(() => {
+    const v = initial?.max_trip_days ?? host?.max_trip_days;
+    return v == null ? "" : String(v);
+  });
 
   const [cancellationPolicy, setCancellationPolicy] =
     useState<CancellationPolicy>(
-      (initial?.cancellation_policy ?? "moderate") as CancellationPolicy
+      (initial?.cancellation_policy ??
+        host?.cancellation_policy ??
+        "moderate") as CancellationPolicy
     );
 
   const [allowedDrivers, setAllowedDrivers] = useState<AllowedDrivers>(
-    (initial?.allowed_drivers ?? "additional_allowed") as AllowedDrivers
+    (initial?.allowed_drivers ??
+      host?.allowed_drivers ??
+      "additional_allowed") as AllowedDrivers
   );
 
-  // -------------------------
-  // license (kept compact; looks premium)
-  // -------------------------
+  const existingLicense = (host?.verification?.license ||
+    initial?.verification?.license ||
+    {}) as any;
+
   const [licenseNumber, setLicenseNumber] = useState(
-    (initial?.licenseNumber ?? "").toString()
+    String(existingLicense?.number ?? "")
   );
   const [licenseCountry, setLicenseCountry] = useState(
-    (initial?.licenseCountry ?? "CA").toString()
+    String(existingLicense?.country ?? "CA")
   );
   const [licenseRegion, setLicenseRegion] = useState(
-    (initial?.licenseRegion ?? "AB").toString()
+    String(existingLicense?.region ?? "AB")
   );
 
   const initialExpiryDate = useMemo(() => {
-    const parsed = initial?.licenseExpiry
-      ? parseYmd(initial.licenseExpiry)
-      : null;
+    const fromHost =
+      typeof existingLicense?.expiry === "string" ? existingLicense.expiry : "";
+    const parsed = parseYmd(fromHost);
     return (
       parsed ??
       new Date(
@@ -144,13 +150,12 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
         new Date().getDate()
       )
     );
-  }, [initial?.licenseExpiry]);
+  }, [existingLicense?.expiry]);
 
   const [expiryDate, setExpiryDate] = useState<Date>(initialExpiryDate);
   const expiryYmd = useMemo(() => formatYmd(expiryDate), [expiryDate]);
 
   const [pickerOpen, setPickerOpen] = useState(false);
-
   const openPicker = () => setPickerOpen(true);
   const closePicker = () => setPickerOpen(false);
 
@@ -163,9 +168,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
     setPickerOpen(false);
   };
 
-  // -------------------------
-  // validation (simple but solid)
-  // -------------------------
   const parsedAdvanceNotice = useMemo(() => {
     const n = Number(advanceNoticeHours);
     return Number.isFinite(n) ? n : NaN;
@@ -184,7 +186,7 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
   }, [maxTripDays]);
 
   const isValid = useMemo(() => {
-    const nameOk = displayName.trim().length >= 2;
+    const nameOk = (userDisplayName || displayName).trim().length >= 2;
 
     const ccOk = countryCode.trim().length === 2;
     const cityOk = city.trim().length >= 2;
@@ -240,6 +242,7 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
       expOk
     );
   }, [
+    userDisplayName,
     displayName,
     countryCode,
     city,
@@ -255,62 +258,65 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
     expiryDate,
   ]);
 
-  // -------------------------
-  // actions
-  // -------------------------
-  const handleContinue = () => {
+  useEffect(() => {
+    if (userDisplayName) setDisplayName(userDisplayName);
+  }, [userDisplayName]);
+
+  const handleContinue = async () => {
     if (!isValid) {
       Alert.alert("Missing info", "Please complete the required fields.");
       return;
     }
 
-    const payload = {
-      display_name: displayName.trim(),
-      host_type: hostType,
-      business_name: hostType === "business" ? businessName.trim() : null,
+    try {
+      setSaving(true);
 
-      base_country_code: countryCode.trim().toUpperCase(),
-      base_city: city.trim(),
-      base_area: area.trim(),
+      const safeDisplayName = (userDisplayName || displayName || "Host").trim();
 
-      advance_notice_hours: Math.max(
-        0,
-        Math.min(168, Number(parsedAdvanceNotice))
-      ),
-      instant_book_enabled: !!instantBookEnabled,
+      const patch: Record<string, any> = {
+        display_name: safeDisplayName,
+        host_type: hostType,
+        business_name: hostType === "business" ? businessName.trim() : null,
 
-      min_trip_days: Math.max(1, Math.min(30, Number(parsedMinTrip))),
-      max_trip_days: parsedMaxTrip === null ? null : Number(parsedMaxTrip),
+        base_country_code: countryCode.trim().toUpperCase(),
+        base_city: city.trim(),
+        base_area: area.trim(),
 
-      cancellation_policy: cancellationPolicy,
-      allowed_drivers: allowedDrivers,
+        advance_notice_hours: Math.max(
+          0,
+          Math.min(168, Number(parsedAdvanceNotice))
+        ),
+        instant_book_enabled: !!instantBookEnabled,
 
-      license: {
-        licenseNumber: licenseNumber.trim(),
-        licenseCountry: licenseCountry.trim().toUpperCase(),
-        licenseRegion: licenseRegion.trim().toUpperCase(),
-        licenseExpiry: expiryYmd,
-      },
-    };
+        min_trip_days: Math.max(1, Math.min(30, Number(parsedMinTrip))),
+        max_trip_days: parsedMaxTrip === null ? null : Number(parsedMaxTrip),
 
-    // ✅ wire this later:
-    // - PATCH /api/host/onboarding/profile
-    // - PATCH /api/host/onboarding/preferences
-    // - PATCH /api/host/onboarding/license
-    // Then navigate to next step (e.g. add first car)
-    onContinue?.(payload);
+        cancellation_policy: cancellationPolicy,
+        allowed_drivers: allowedDrivers,
 
-    Alert.alert("Saved (UI)", "Next: add your first car.");
+        verification: {
+          ...(host?.verification || {}),
+          license: {
+            number: licenseNumber.trim(),
+            country: licenseCountry.trim().toUpperCase(),
+            region: licenseRegion.trim().toUpperCase(),
+            expiry: expiryYmd,
+          },
+        },
+      };
+
+      const updatedHost = await patchHostProfile(patch);
+      dispatch(setHost(updatedHost));
+
+      onContinue?.(patch);
+      router.push("/host-onboarding-car");
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  useEffect(() => {
-    // Otherwise fill from logged-in user, but only if input is still empty/default
-    setDisplayName(userDisplayName);
-  }, [userDisplayName]);
-
-  // -------------------------
-  // UI
-  // -------------------------
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
@@ -323,7 +329,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Top header */}
           <View style={styles.topHeader}>
             <View style={styles.stepPill}>
               <Feather name="clipboard" size={14} color="rgba(17,24,39,0.75)" />
@@ -343,7 +348,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
             A few details to prepare your account. You can edit later.
           </Text>
 
-          {/* Card: Profile */}
           <View style={styles.card}>
             <View style={styles.cardTitleRow}>
               <View style={styles.iconChip}>
@@ -357,15 +361,14 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
               <Feather name="lock" size={12} color="rgba(17,24,39,0.45)" />
             </View>
 
-            <View style={styles.inputWrap}>
+            <View style={[styles.inputWrap, styles.inputWrapDisabled]}>
               <TextInput
                 value={displayName}
                 placeholder="e.g. Vikram"
-                placeholderTextColor="rgba(17,24,39,0.35)"
+                placeholderTextColor="rgba(17,24,39,0.30)"
                 style={[styles.input, styles.inputDisabled]}
                 autoCapitalize="words"
                 autoCorrect={false}
-                returnKeyType="next"
                 editable={false}
                 selectTextOnFocus={false}
               />
@@ -403,7 +406,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
             ) : null}
           </View>
 
-          {/* Card: Base location */}
           <View style={styles.card}>
             <View style={styles.cardTitleRow}>
               <View style={styles.iconChip}>
@@ -461,7 +463,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
             </View>
           </View>
 
-          {/* Card: Preferences (compact) */}
           <View style={styles.card}>
             <View style={styles.cardTitleRow}>
               <View style={styles.iconChip}>
@@ -561,7 +562,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
             </View>
           </View>
 
-          {/* Card: License (compact but premium) */}
           <View style={styles.card}>
             <View style={styles.cardTitleRow}>
               <View style={styles.iconChip}>
@@ -584,7 +584,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
                 style={styles.input}
                 autoCapitalize="characters"
                 autoCorrect={false}
-                returnKeyType="next"
               />
             </View>
 
@@ -643,12 +642,18 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
 
           <View style={{ height: 12 }} />
 
+          {saving ? (
+            <View style={{ alignItems: "center", marginBottom: 10 }}>
+              <ActivityIndicator />
+            </View>
+          ) : null}
+
           <Button
             title="Continue"
             onPress={handleContinue}
             variant="primary"
             size="lg"
-            disabled={!isValid}
+            disabled={!isValid || saving}
           />
 
           <Text style={styles.nextHint}>Next: you’ll add your first car.</Text>
@@ -656,7 +661,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
           <View style={{ height: 28 }} />
         </ScrollView>
 
-        {/* ANDROID: system dialog */}
         {Platform.OS === "android" && pickerOpen ? (
           <DateTimePicker
             value={expiryDate}
@@ -667,7 +671,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
           />
         ) : null}
 
-        {/* iOS: bottom sheet */}
         {Platform.OS === "ios" ? (
           <Modal
             visible={pickerOpen}
@@ -701,9 +704,6 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
   );
 }
 
-// -------------------------
-// small UI parts
-// -------------------------
 function SegButton({
   label,
   selected,
@@ -846,8 +846,14 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
     letterSpacing: 0.7,
-    marginBottom: 10,
+  },
+
+  labelInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     marginTop: 12,
+    marginBottom: 10,
   },
 
   row2: { flexDirection: "row", alignItems: "flex-start" },
@@ -861,11 +867,20 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
 
+  inputWrapDisabled: {
+    backgroundColor: "rgba(17,24,39,0.03)",
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+
   input: {
     fontSize: 16,
     fontWeight: "900",
     color: "#111827",
     padding: 0,
+  },
+
+  inputDisabled: {
+    color: "rgba(17,24,39,0.55)",
   },
 
   inputTextOnly: {},
@@ -931,7 +946,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
-  // iOS Modal sheet
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.35)",
@@ -985,17 +999,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     color: "#111827",
-  },
-  labelInline: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 12,
-    marginBottom: 10,
-  },
-
-  inputDisabled: {
-    color: "rgba(17,24,39,0.55)",
-    backgroundColor: "rgba(17,24,39,0.03)",
   },
 });
