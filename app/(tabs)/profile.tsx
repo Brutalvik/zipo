@@ -21,9 +21,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useAuth } from "@/hooks/useAuth";
 import { auth } from "@/services/firebase";
-import { useAppDispatch } from "@/redux/hooks";
+import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import { updateUser } from "@/redux/slices/authSlice";
 import Button from "@/components/Button/Button";
+import { fetchHostMe } from "@/redux/thunks/hostThunk";
+import { selectHost } from "@/redux/slices/hostSlice";
 
 type MenuItem = {
   id: string;
@@ -69,6 +71,32 @@ export default function ProfileScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const { user, logout } = useAuth();
+  const host = useAppSelector(selectHost);
+  const hostExists = !!host;
+
+  const handleBecomePartner = async () => {
+    try {
+      await dispatch(fetchHostMe() as any);
+
+      if (hostExists) {
+        if (!isHost) {
+          await updateModeOnBackend("host");
+          dispatch(updateUser({ mode: "host" }));
+        }
+        router.replace("/(app)/host-program");
+        return;
+      }
+
+      if (!isHost) {
+        await updateModeOnBackend("host");
+        dispatch(updateUser({ mode: "host" }));
+      }
+      router.push("/(app)/host-program");
+    } catch (e: any) {
+      console.warn("Become partner failed:", e?.message || e);
+      Alert.alert("Error", e?.message || "Could not start host onboarding.");
+    }
+  };
 
   const refreshUserFromBackend = React.useCallback(async () => {
     try {
@@ -103,7 +131,24 @@ export default function ProfileScreen() {
     { id: "favorite", label: "Favorite Cars", iconType: "heart" },
     { id: "previous", label: "Previous Rents", iconType: "history" },
     { id: "notif", label: "Notifications", iconType: "bell" },
-    { id: "partners", label: "Become a Partner", iconType: "link" },
+    {
+      id: "partners",
+      label: "Become a Partner",
+      iconType: "link" as const,
+      onPress: handleBecomePartner,
+    },
+
+    // Only show if NOT already a host
+    // ...(!hostExists
+    //   ? [
+    //       {
+    //         id: "partners",
+    //         label: "Become a Partner",
+    //         iconType: "link" as const,
+    //         onPress: handleBecomePartner,
+    //       },
+    //     ]
+    //   : []),
   ];
 
   const supportItems: MenuItem[] = [
@@ -259,7 +304,8 @@ export default function ProfileScreen() {
   useFocusEffect(
     React.useCallback(() => {
       refreshUserFromBackend();
-    }, [refreshUserFromBackend])
+      dispatch(fetchHostMe() as any);
+    }, [refreshUserFromBackend, dispatch])
   );
 
   const verifyLabel = displayPhone ? "Verify phone number" : "Add phone number";
@@ -315,6 +361,17 @@ export default function ProfileScreen() {
             <Text style={styles.brand}>Zipo</Text>
 
             {/* ✅ Glass button using your custom component */}
+            {/* {hostExists ? (
+              <View style={{ width: 168 }}>
+                <Button
+                  title={`Switch to ${isHost ? "guest" : "host"}`}
+                  variant="primary"
+                  size="sm"
+                  onPress={handleToggleMode}
+                  iconName="exchange"
+                />
+              </View>
+            ) : null} */}
             <View style={{ width: 168 }}>
               <Button
                 title={`Switch to ${isHost ? "guest" : "host"}`}

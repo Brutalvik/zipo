@@ -324,13 +324,17 @@ export default function NearbyScreen() {
         `&maxLat=${encodeURIComponent(bb.maxLat)}` +
         `&minLng=${encodeURIComponent(bb.minLng)}` +
         `&maxLng=${encodeURIComponent(bb.maxLng)}` +
-        `&status=active` +
+        `&status=draft` +
         `&limit=500`;
 
       setIsLoading(true);
       try {
         const resp = await fetch(url);
+
+        console.log("cars/map url =>", url);
         const json = await resp.json();
+
+        console.log("JSON: ", json);
 
         const listRaw = Array.isArray((json as any)?.items)
           ? (json as any).items
@@ -338,10 +342,55 @@ export default function NearbyScreen() {
           ? json
           : [];
 
-        const list: ApiCar[] = Array.isArray(listRaw)
-          ? (listRaw as any[]).filter(Boolean)
+        const list: any[] = Array.isArray(listRaw)
+          ? listRaw.filter(Boolean)
           : [];
-        setCars(list);
+
+        const normalized: ApiCar[] = list.map((c: any) => {
+          const pickupLat =
+            typeof c?.pickup?.lat === "number"
+              ? c.pickup.lat
+              : typeof c?.pickup_lat === "number"
+              ? c.pickup_lat
+              : typeof c?.pickupLat === "number"
+              ? c.pickupLat
+              : null;
+
+          const pickupLng =
+            typeof c?.pickup?.lng === "number"
+              ? c.pickup.lng
+              : typeof c?.pickup_lng === "number"
+              ? c.pickup_lng
+              : typeof c?.pickupLng === "number"
+              ? c.pickupLng
+              : null;
+
+          return {
+            id: String(c.id),
+            title: String(c.title ?? c.name ?? ""),
+            imageUrl: String(c.imageUrl ?? c.image_url ?? c.image_path ?? ""),
+            pricePerDay: Number(c.pricePerDay ?? c.price_per_day ?? 0),
+            currency: String(c.currency ?? "CAD"),
+            rating: Number(c.rating ?? c.rating_avg ?? 0),
+            reviews: Number(c.reviews ?? c.rating_count ?? 0),
+            vehicleType: (c.vehicleType ?? c.vehicle_type ?? null) as any,
+            transmission: (c.transmission ?? null) as any,
+            seats: typeof c.seats === "number" ? c.seats : null,
+            address: {
+              countryCode: c?.address?.countryCode ?? c?.country_code ?? null,
+              city: c?.address?.city ?? c?.city ?? null,
+              area: c?.address?.area ?? c?.area ?? null,
+              fullAddress: c?.address?.fullAddress ?? c?.full_address ?? null,
+            },
+            pickup: {
+              lat: pickupLat,
+              lng: pickupLng,
+            },
+          };
+        });
+
+        setCars(normalized);
+        console.log("NORMALIZED : ", normalized);
       } catch (e) {
         console.warn("cars/map fetch failed", e);
         setCars([]);
