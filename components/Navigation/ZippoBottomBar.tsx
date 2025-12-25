@@ -7,10 +7,16 @@ import {
   Text,
   Animated,
   LayoutChangeEvent,
+  ActivityIndicator,
 } from "react-native";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import type { TabConfig } from "./tablcons";
+import { useAuth } from "@/hooks/useAuth";
+import { useRefreshMe } from "@/hooks/useRefreshMe";
+import {
+  GUEST_TAB_CONFIG,
+  HOST_TAB_CONFIG,
+} from "@/components/navigation/tabConfig";
 
 const ZIPO_COLORS = {
   pillBg: "rgba(17, 24, 39, 0.78)",
@@ -33,8 +39,10 @@ const ZIPO_COLORS = {
 
 type TabLayout = { x: number; width: number };
 
+const HOST = "host";
+
 const renderTabIcon = (
-  icon: { family: "feather" | "material"; name: string },
+  icon: { family: string; name: string },
   isFocused: boolean
 ) => {
   const color = isFocused ? ZIPO_COLORS.iconActive : ZIPO_COLORS.iconInactive;
@@ -52,8 +60,46 @@ export function ZipoBottomBar({
   state,
   descriptors,
   navigation,
-  tabConfig,
-}: BottomTabBarProps & { tabConfig: TabConfig }) {
+}: BottomTabBarProps) {
+  const { user, initializing } = useAuth() as any; // if your hook doesn't expose initializing, remove it + see note below
+  const { refreshMe, refreshing: refreshingMe } = useRefreshMe() as any;
+
+  // Refresh /me once to ensure user.mode is correct
+  const didRefreshRef = React.useRef(false);
+  const [refreshingLocal, setRefreshingLocal] = React.useState(false);
+
+  React.useEffect(() => {
+    if (didRefreshRef.current) return;
+    if (initializing) return;
+    if (!user) return;
+
+    didRefreshRef.current = true;
+
+    (async () => {
+      try {
+        setRefreshingLocal(true);
+        await refreshMe?.();
+      } finally {
+        setRefreshingLocal(false);
+      }
+    })();
+  }, [user, initializing, refreshMe]);
+
+  const isRefreshingMode = Boolean(refreshingMe || refreshingLocal);
+
+  // Decide tab config based on *final* mode
+  // While refreshing, keep previous mode stable to avoid UI flicker.
+  const modeRef = React.useRef<"host" | "guest">("guest");
+  React.useEffect(() => {
+    if (!user) return;
+    if (isRefreshingMode) return;
+
+    modeRef.current = user?.mode === HOST ? "host" : "guest";
+  }, [user, isRefreshingMode]);
+
+  const mode = modeRef.current;
+  const tabconfig = mode === "host" ? HOST_TAB_CONFIG : GUEST_TAB_CONFIG;
+
   const [tabLayouts, setTabLayouts] = React.useState<TabLayout[]>([]);
   const [indicatorWidth, setIndicatorWidth] = React.useState(0);
 
@@ -111,6 +157,13 @@ export function ZipoBottomBar({
           </Animated.View>
         )}
 
+        {/* Optional tiny loader while mode refresh is happening */}
+        {isRefreshingMode ? (
+          <View pointerEvents="none" style={styles.modeRefreshingDot}>
+            <ActivityIndicator size="small" />
+          </View>
+        ) : null}
+
         {state.routes.map((route, index) => {
           const { options } = descriptors[route.key];
           const isFocused = state.index === index;
@@ -132,9 +185,9 @@ export function ZipoBottomBar({
           };
 
           const config =
-            tabConfig[route.name] ??
+            (tabconfig as any)[route.name] ??
             ({
-              icon: "circle",
+              icon: { family: "feather", name: "circle" },
               label: route.name,
             } as const);
 
@@ -282,4 +335,20 @@ const styles = StyleSheet.create({
     color: ZIPO_COLORS.labelInactive,
   },
   tabLabelActive: { color: ZIPO_COLORS.labelActive },
+
+  // tiny spinner badge while refreshing mode
+  modeRefreshingDot: {
+    position: "absolute",
+    right: 12,
+    top: 10,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
+  },
 });

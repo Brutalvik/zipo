@@ -11,6 +11,7 @@ import {
   View,
   Image,
   ActivityIndicator,
+  StatusBar,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -224,6 +225,64 @@ function stageLabel(stage: PhotoStage) {
   }
 }
 
+/** ------------ tiny UI helpers (no extra deps) ------------ */
+
+function Pill({
+  icon,
+  text,
+  tone = "neutral",
+}: {
+  icon?: keyof typeof Feather.glyphMap;
+  text: string;
+  tone?: "neutral" | "good" | "warn" | "danger";
+}) {
+  const toneStyle =
+    tone === "good"
+      ? styles.pillGood
+      : tone === "warn"
+      ? styles.pillWarn
+      : tone === "danger"
+      ? styles.pillDanger
+      : styles.pillNeutral;
+
+  const toneText =
+    tone === "good"
+      ? styles.pillTextGood
+      : tone === "warn"
+      ? styles.pillTextWarn
+      : tone === "danger"
+      ? styles.pillTextDanger
+      : styles.pillTextNeutral;
+
+  return (
+    <View style={[styles.pill, toneStyle]}>
+      {icon ? (
+        <Feather
+          name={icon}
+          size={13}
+          color={(toneText as any)?.color ?? "rgba(17,24,39,0.7)"}
+        />
+      ) : null}
+      <Text style={[styles.pillText, toneText]}>{text}</Text>
+    </View>
+  );
+}
+
+function SoftProgress({
+  value,
+  height = 10,
+}: {
+  value: number; // 0..1
+  height?: number;
+}) {
+  const pct = Math.round(clamp01(value) * 100);
+  return (
+    <View style={[styles.progressTrack, { height }]}>
+      <View style={[styles.progressFill, { width: `${pct}%` }]} />
+    </View>
+  );
+}
+
 export default function HostOnboardingPhotosScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ carId?: string }>();
@@ -242,6 +301,7 @@ export default function HostOnboardingPhotosScreen() {
   const cancelRef = useRef(false);
 
   const canContinue = photos.length >= 3;
+  const canAddMore = !busy && photos.length > 0 && photos.length < 12;
 
   const overallProgress = useMemo(() => {
     if (!photos.length) return 0;
@@ -251,23 +311,6 @@ export default function HostOnboardingPhotosScreen() {
     );
     return clamp01(sum / photos.length);
   }, [photos, photoUi]);
-
-  const primaryLabel = useMemo(() => {
-    if (busy) return "Uploading…";
-    if (photos.length === 0) return "Add photos";
-    if (!canContinue) return `Add ${3 - photos.length} more photo(s)`;
-    return "Upload & Continue";
-  }, [busy, photos.length, canContinue]);
-
-  const helperLine = useMemo(() => {
-    if (busy) {
-      const pct = Math.round(overallProgress * 100);
-      return `Uploading ${runStats.done}/${runStats.total} • ${pct}%`;
-    }
-    if (photos.length === 0) return "Add at least 3 photos to continue.";
-    if (photos.length < 3) return `Add ${3 - photos.length} more photo(s).`;
-    return "Tip: 5–6 photos perform best.";
-  }, [busy, photos.length, runStats.done, runStats.total, overallProgress]);
 
   const setPhotoState = (id: string, patch: Partial<PhotoUiState>) => {
     setPhotoUi((prev) => ({
@@ -279,6 +322,23 @@ export default function HostOnboardingPhotosScreen() {
       },
     }));
   };
+
+  const helperLine = useMemo(() => {
+    if (busy) {
+      const pct = Math.round(overallProgress * 100);
+      return `Uploading ${runStats.done}/${runStats.total} • ${pct}%`;
+    }
+    if (photos.length === 0) return "Add at least 3 photos to continue.";
+    if (photos.length < 3) return `Add ${3 - photos.length} more to continue.`;
+    return "Looks good — 5–6 photos perform best.";
+  }, [busy, overallProgress, photos.length, runStats.done, runStats.total]);
+
+  const primaryLabel = useMemo(() => {
+    if (busy) return "Uploading…";
+    if (photos.length === 0) return "Add photos";
+    if (!canContinue) return `Add ${3 - photos.length} more photo(s)`;
+    return "Upload & Continue";
+  }, [busy, photos.length, canContinue]);
 
   const requestPermissionIfNeeded = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -326,8 +386,9 @@ export default function HostOnboardingPhotosScreen() {
 
     setPhotoUi((prev) => {
       const out = { ...prev };
-      for (const p of next)
+      for (const p of next) {
         out[p.id] = out[p.id] ?? { progress: 0, stage: "queued" };
+      }
       return out;
     });
   };
@@ -342,6 +403,12 @@ export default function HostOnboardingPhotosScreen() {
     });
   };
 
+  const onStop = () => {
+    if (!busy) return;
+    cancelRef.current = true;
+    Alert.alert("Stopping", "We will stop after the current upload finishes.");
+  };
+
   const onPrimaryPress = async () => {
     if (!carId) {
       Alert.alert(
@@ -353,7 +420,7 @@ export default function HostOnboardingPhotosScreen() {
 
     if (busy) return;
 
-    // single CTA behavior:
+    // single CTA:
     if (!canContinue) {
       await pickPhotos();
       return;
@@ -365,9 +432,8 @@ export default function HostOnboardingPhotosScreen() {
 
     try {
       // reset UI
-      for (const p of photos) {
-        setPhotoState(p.id, { stage: "queued", progress: 0, error: "" });
-      }
+      for (const p of photos)
+        setPhotoState(p.id, { stage: "queued", progress: 0 });
 
       const toFinalize: Array<{
         id: string;
@@ -384,7 +450,7 @@ export default function HostOnboardingPhotosScreen() {
         const raw = photos[i];
         setRunStats({ current: raw.id, done: i, total: photos.length });
 
-        setPhotoState(raw.id, { stage: "requesting_url", progress: 0.02 });
+        setPhotoState(raw.id, { stage: "requesting_url", progress: 0.03 });
 
         const p = await ensurePngPhoto(raw);
         const mimeType = "image/png";
@@ -402,7 +468,7 @@ export default function HostOnboardingPhotosScreen() {
           uri: p.uri,
           contentType: mimeType,
           onProgress: (frac) => {
-            // map 0..1 -> 0.10..0.92
+            // 0..1 -> 0.10..0.92
             setPhotoState(raw.id, { progress: 0.1 + 0.82 * clamp01(frac) });
           },
         });
@@ -432,7 +498,6 @@ export default function HostOnboardingPhotosScreen() {
     } catch (e: any) {
       console.warn("upload photos failed:", e?.message || e);
 
-      // mark current as failed if we know it
       if (runStats.current) {
         setPhotoState(runStats.current, {
           stage: "failed",
@@ -447,21 +512,11 @@ export default function HostOnboardingPhotosScreen() {
     }
   };
 
-  const onStop = () => {
-    if (!busy) return;
-    cancelRef.current = true;
-    Alert.alert("Stopping", "We will stop after the current upload finishes.");
-  };
-
-  // More intuitive layout:
-  // - Big top progress card during upload
-  // - Grid stays, but spinner is moved into an overlay bar (not cramped)
-  // - "Add" action is REMOVED while busy (your request)
-  // - Optional Stop button only while busy
-  const showTopActionAdd = !busy && photos.length > 0 && photos.length < 12;
+  const topTone: "good" | "warn" = canContinue ? "good" : "warn";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         style={styles.safe}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -471,40 +526,39 @@ export default function HostOnboardingPhotosScreen() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {/* Top header */}
-          <View style={styles.topHeader}>
+          {/* Top bar */}
+          <View style={styles.topBar}>
             <Pressable
               onPress={() => router.back()}
               disabled={busy}
               style={({ pressed }) => [
-                styles.iconBtn,
+                styles.navBtn,
                 busy && { opacity: 0.4 },
                 pressed && { opacity: 0.85 },
               ]}
               accessibilityRole="button"
               accessibilityLabel="Back"
             >
-              <Feather name="arrow-left" size={18} color="#111827" />
+              <Feather name="arrow-left" size={18} color="#0F172A" />
             </Pressable>
 
             <View style={{ flex: 1 }}>
-              <Text style={styles.screenTitle}>Car photos</Text>
-              <Text style={styles.screenSub}>
-                {busy ? "Uploading in progress…" : "Add at least 3 photos"}
-              </Text>
+              <Text style={styles.topTitle}>Upload photos</Text>
+              <Text style={styles.topSub}>{helperLine}</Text>
             </View>
 
-            {showTopActionAdd ? (
+            {/* remove add button while uploading (your request) */}
+            {canAddMore ? (
               <Pressable
                 onPress={pickPhotos}
                 style={({ pressed }) => [
-                  styles.topRightBtn,
+                  styles.addBtn,
                   pressed && { opacity: 0.85 },
                 ]}
                 accessibilityRole="button"
               >
-                <Feather name="plus" size={16} color="rgba(17,24,39,0.85)" />
-                <Text style={styles.topRightBtnText}>Add</Text>
+                <Feather name="plus" size={16} color="#0F172A" />
+                <Text style={styles.addBtnText}>Add</Text>
               </Pressable>
             ) : busy ? (
               <Pressable
@@ -523,63 +577,68 @@ export default function HostOnboardingPhotosScreen() {
             )}
           </View>
 
-          {/* Hero / progress card */}
-          <View style={styles.heroCard}>
-            <View style={styles.heroRow}>
+          {/* Modern hero card */}
+          <View style={[styles.card, styles.heroCard]}>
+            <View style={styles.heroHeader}>
               <View style={styles.heroIcon}>
-                <Feather name="camera" size={18} color="rgba(17,24,39,0.70)" />
+                <Feather name="camera" size={18} color="rgba(15,23,42,0.75)" />
               </View>
+
               <View style={{ flex: 1 }}>
-                <Text style={styles.heroTitle}>
-                  {busy ? "Uploading photos" : "Add photos to your listing"}
+                <Text style={styles.heroTitle}>Show your car clearly</Text>
+                <Text style={styles.heroDesc}>
+                  Front, back, sides, interior, and odometer works best.
                 </Text>
-                <Text style={styles.heroHint}>{helperLine}</Text>
               </View>
+
+              <Pill
+                icon={topTone === "good" ? "check" : "alert-circle"}
+                text={canContinue ? "Ready" : "Need 3+"}
+                tone={topTone}
+              />
             </View>
 
             <View style={{ marginTop: 12 }}>
-              <View style={styles.overallBar}>
-                <View
-                  style={[
-                    styles.overallFill,
-                    { width: `${Math.round(overallProgress * 100)}%` },
-                  ]}
-                />
-              </View>
-
-              <View style={styles.overallMetaRow}>
-                <Text style={styles.overallText}>
+              <SoftProgress
+                value={busy ? overallProgress : photos.length / 12}
+              />
+              <View style={styles.heroMetaRow}>
+                <Text style={styles.heroMeta}>
                   {busy
                     ? `Overall ${Math.round(overallProgress * 100)}%`
                     : `${photos.length}/12 selected`}
                 </Text>
 
-                {!busy ? (
-                  <View style={styles.requirementsPill}>
-                    <Feather
-                      name={canContinue ? "check" : "alert-circle"}
-                      size={14}
-                      color={canContinue ? "#111827" : "rgba(17,24,39,0.55)"}
-                    />
-                    <Text style={styles.requirementsText}>
-                      {canContinue ? "Ready" : "Need 3+"}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.requirementsPill}>
-                    <ActivityIndicator />
-                    <Text style={styles.requirementsText}>Working</Text>
-                  </View>
-                )}
+                <View style={styles.heroMetaPills}>
+                  <Pill icon="image" text="PNG auto" tone="neutral" />
+                  <Pill icon="shield" text="Secure upload" tone="neutral" />
+                </View>
               </View>
             </View>
+
+            {/* Queue / current item line (feels modern + reassuring) */}
+            {busy ? (
+              <View style={styles.queueLine}>
+                <ActivityIndicator />
+                <Text style={styles.queueText}>
+                  Uploading {runStats.done}/{runStats.total}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           {/* Grid */}
-          <View style={styles.gridWrap}>
+          <View style={[styles.card, styles.gridCard]}>
+            <View style={styles.gridHeader}>
+              <Text style={styles.sectionTitle}>Selected photos</Text>
+              <Text style={styles.sectionSub}>Minimum 3 • Recommended 5–6</Text>
+            </View>
+
             {photos.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Feather name="image" size={20} color="rgba(17,24,39,0.35)" />
+              <View style={styles.empty}>
+                <View style={styles.emptyIcon}>
+                  <Feather name="image" size={18} color="rgba(15,23,42,0.45)" />
+                </View>
                 <Text style={styles.emptyTitle}>No photos yet</Text>
                 <Text style={styles.emptySub}>
                   Tap below to choose images from your phone.
@@ -594,40 +653,44 @@ export default function HostOnboardingPhotosScreen() {
 
                   const showOverlay = busy || stage === "failed";
                   const overlayTone =
-                    stage === "done"
-                      ? "rgba(255,255,255,0.92)"
-                      : stage === "failed"
+                    stage === "failed"
                       ? "rgba(255,245,245,0.96)"
                       : "rgba(255,255,255,0.92)";
 
-                  return (
-                    <View key={p.id} style={styles.thumbWrap}>
-                      <Image source={{ uri: p.uri }} style={styles.thumb} />
+                  const badgeTone =
+                    stage === "done"
+                      ? styles.badgeDone
+                      : stage === "failed"
+                      ? styles.badgeFail
+                      : styles.badgeNeutral;
 
-                      {!busy && (
+                  return (
+                    <View key={p.id} style={styles.tile}>
+                      <Image source={{ uri: p.uri }} style={styles.tileImg} />
+
+                      {!busy ? (
                         <Pressable
                           onPress={() => removePhoto(p.id)}
                           style={({ pressed }) => [
-                            styles.removeBtn,
+                            styles.tileX,
                             pressed && { opacity: 0.85 },
                           ]}
                           accessibilityRole="button"
-                          accessibilityLabel="Remove photo"
                         >
-                          <Feather name="x" size={14} color="#111827" />
+                          <Feather name="x" size={14} color="#0F172A" />
                         </Pressable>
-                      )}
+                      ) : null}
 
-                      {showOverlay && (
+                      {/* bigger overlay so spinner isn't cramped */}
+                      {showOverlay ? (
                         <View
                           style={[
-                            styles.thumbOverlay,
+                            styles.tileOverlay,
                             { backgroundColor: overlayTone },
                           ]}
                         >
-                          {/* Bigger status row (spinner no longer cramped) */}
-                          <View style={styles.thumbTopRow}>
-                            <View style={styles.badge}>
+                          <View style={styles.tileTopRow}>
+                            <View style={[styles.badge, badgeTone]}>
                               <Text style={styles.badgeText}>
                                 {stageLabel(stage)}
                               </Text>
@@ -638,7 +701,7 @@ export default function HostOnboardingPhotosScreen() {
                             stage === "finalizing" ? (
                               <ActivityIndicator />
                             ) : stage === "done" ? (
-                              <Feather name="check" size={16} color="#111827" />
+                              <Feather name="check" size={16} color="#0F172A" />
                             ) : stage === "failed" ? (
                               <Feather
                                 name="alert-circle"
@@ -648,36 +711,30 @@ export default function HostOnboardingPhotosScreen() {
                             ) : null}
                           </View>
 
-                          {/* Progress bar */}
-                          <View style={styles.thumbBar}>
+                          <View style={styles.tileBar}>
                             <View
                               style={[
-                                styles.thumbFill,
+                                styles.tileFill,
                                 { width: `${Math.round(prog * 100)}%` },
                               ]}
                             />
                           </View>
 
-                          <View style={styles.thumbBottomRow}>
-                            <Text style={styles.thumbMetaText}>
+                          <View style={styles.tileBottomRow}>
+                            <Text style={styles.tilePct}>
                               {stage === "uploading"
                                 ? `${Math.round(prog * 100)}%`
                                 : stage === "done"
                                 ? "100%"
-                                : stage === "failed"
-                                ? "—"
                                 : ""}
                             </Text>
 
-                            {stage === "failed" && !!ui?.error ? (
-                              <Text style={styles.thumbError} numberOfLines={1}>
+                            {stage === "failed" && ui?.error ? (
+                              <Text style={styles.tileErr} numberOfLines={1}>
                                 {ui.error}
                               </Text>
                             ) : (
-                              <Text
-                                style={styles.thumbMetaSub}
-                                numberOfLines={1}
-                              >
+                              <Text style={styles.tileHint} numberOfLines={1}>
                                 {stage === "queued" && !busy
                                   ? "Ready to upload"
                                   : ""}
@@ -685,7 +742,7 @@ export default function HostOnboardingPhotosScreen() {
                             )}
                           </View>
                         </View>
-                      )}
+                      ) : null}
                     </View>
                   );
                 })}
@@ -712,57 +769,73 @@ export default function HostOnboardingPhotosScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F6F7FB" },
-  content: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18 },
+/** --------------- styles --------------- */
+/**
+ * Modern look goals:
+ * - softer background + “frosted” cards (no extra deps)
+ * - crisp typography
+ * - subtle shadow + border
+ * - premium chips + progress
+ */
+const BG = "#F6F7FB";
+const INK = "#0F172A";
 
-  topHeader: {
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: BG },
+
+  content: {
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+  },
+
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 12,
     marginBottom: 12,
   },
 
-  iconBtn: {
+  navBtn: {
     width: 42,
     height: 42,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(17,24,39,0.06)",
+    backgroundColor: "rgba(255,255,255,0.85)",
     borderWidth: 1,
-    borderColor: "rgba(17,24,39,0.10)",
+    borderColor: "rgba(15,23,42,0.10)",
   },
 
-  screenTitle: {
+  topTitle: {
     fontSize: 16,
     fontWeight: "900",
-    color: "#111827",
+    color: INK,
     letterSpacing: -0.1,
   },
-  screenSub: {
+
+  topSub: {
     marginTop: 2,
     fontSize: 12,
     fontWeight: "800",
-    color: "rgba(17,24,39,0.50)",
+    color: "rgba(15,23,42,0.55)",
   },
 
-  topRightBtn: {
+  addBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.06)",
+    backgroundColor: "rgba(255,255,255,0.85)",
     borderWidth: 1,
-    borderColor: "rgba(17,24,39,0.10)",
+    borderColor: "rgba(15,23,42,0.10)",
   },
-  topRightBtnText: {
+  addBtnText: {
     fontSize: 12,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.85)",
+    color: INK,
   },
 
   stopBtn: {
@@ -778,23 +851,34 @@ const styles = StyleSheet.create({
   },
   stopBtnText: { fontSize: 12, fontWeight: "900", color: "#991B1B" },
 
-  heroCard: {
-    borderRadius: 20,
-    backgroundColor: "#FFFFFF",
+  card: {
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.92)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    borderColor: "rgba(15,23,42,0.08)",
     padding: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 2,
   },
 
-  heroRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  heroCard: {},
+
+  heroHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
 
   heroIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 14,
-    backgroundColor: "rgba(17,24,39,0.04)",
+    width: 38,
+    height: 38,
+    borderRadius: 16,
+    backgroundColor: "rgba(15,23,42,0.04)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    borderColor: "rgba(15,23,42,0.08)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -802,31 +886,19 @@ const styles = StyleSheet.create({
   heroTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.92)",
+    color: INK,
     letterSpacing: -0.1,
   },
 
-  heroHint: {
-    marginTop: 4,
+  heroDesc: {
+    marginTop: 3,
     fontSize: 12,
     fontWeight: "800",
-    color: "rgba(17,24,39,0.50)",
+    color: "rgba(15,23,42,0.55)",
+    lineHeight: 16,
   },
 
-  overallBar: {
-    width: "100%",
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.08)",
-    overflow: "hidden",
-  },
-  overallFill: {
-    height: "100%",
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.55)",
-  },
-
-  overallMetaRow: {
+  heroMetaRow: {
     marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
@@ -834,100 +906,176 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 
-  overallText: {
+  heroMeta: {
     fontSize: 12,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.55)",
+    color: "rgba(15,23,42,0.60)",
   },
 
-  requirementsPill: {
+  heroMetaPills: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  queueLine: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(15,23,42,0.06)",
+  },
+
+  queueText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(15,23,42,0.65)",
+  },
+
+  // pills
+  pill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.04)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
   },
+  pillText: { fontSize: 12, fontWeight: "900" },
 
-  requirementsText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.70)",
+  pillNeutral: {
+    backgroundColor: "rgba(15,23,42,0.04)",
+    borderColor: "rgba(15,23,42,0.10)",
   },
+  pillTextNeutral: { color: "rgba(15,23,42,0.72)" },
 
-  gridWrap: {
-    marginTop: 12,
-    borderRadius: 20,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
-    padding: 12,
+  pillGood: {
+    backgroundColor: "rgba(34,197,94,0.10)",
+    borderColor: "rgba(34,197,94,0.20)",
+  },
+  pillTextGood: { color: "rgba(15,23,42,0.85)" },
+
+  pillWarn: {
+    backgroundColor: "rgba(245,158,11,0.12)",
+    borderColor: "rgba(245,158,11,0.22)",
+  },
+  pillTextWarn: { color: "rgba(15,23,42,0.80)" },
+
+  pillDanger: {
+    backgroundColor: "rgba(239,68,68,0.10)",
+    borderColor: "rgba(239,68,68,0.20)",
+  },
+  pillTextDanger: { color: "#991B1B" },
+
+  // progress
+  progressTrack: {
+    width: "100%",
+    borderRadius: 999,
+    backgroundColor: "rgba(15,23,42,0.08)",
     overflow: "hidden",
   },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "rgba(15,23,42,0.60)",
+  },
 
-  emptyState: {
-    paddingVertical: 26,
+  gridCard: { marginTop: 12 },
+
+  gridHeader: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 10,
+  },
+
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: INK,
+    letterSpacing: -0.1,
+  },
+
+  sectionSub: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(15,23,42,0.50)",
+  },
+
+  empty: {
+    paddingVertical: 24,
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
-  emptyTitle: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.70)",
-  },
-  emptySub: {
-    textAlign: "center",
-    fontSize: 12,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.40)",
-    lineHeight: 16,
-    maxWidth: 280,
-  },
 
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-
-  thumbWrap: {
-    width: "31%",
-    aspectRatio: 1,
+  emptyIcon: {
+    width: 38,
+    height: 38,
     borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "rgba(17,24,39,0.04)",
+    backgroundColor: "rgba(15,23,42,0.04)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
-    position: "relative",
-  },
-  thumb: { width: "100%", height: "100%" },
-
-  removeBtn: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
+    borderColor: "rgba(15,23,42,0.08)",
     alignItems: "center",
     justifyContent: "center",
   },
 
-  // Bigger overlay so spinner is never cramped/covered
-  thumbOverlay: {
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(15,23,42,0.75)",
+  },
+
+  emptySub: {
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(15,23,42,0.45)",
+    lineHeight: 16,
+    maxWidth: 290,
+  },
+
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+
+  tile: {
+    width: "31%",
+    aspectRatio: 1,
+    borderRadius: 18,
+    overflow: "hidden",
+    backgroundColor: "rgba(15,23,42,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.08)",
+    position: "relative",
+  },
+
+  tileImg: { width: "100%", height: "100%" },
+
+  tileX: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(15,23,42,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // bigger overlay area so spinner never cramped
+  tileOverlay: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
     padding: 8,
     borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.06)",
+    borderTopColor: "rgba(15,23,42,0.06)",
   },
 
-  thumbTopRow: {
+  tileTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -938,31 +1086,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(17,24,39,0.10)",
   },
+
+  badgeNeutral: {
+    backgroundColor: "rgba(15,23,42,0.04)",
+    borderColor: "rgba(15,23,42,0.10)",
+  },
+
+  badgeDone: {
+    backgroundColor: "rgba(34,197,94,0.10)",
+    borderColor: "rgba(34,197,94,0.18)",
+  },
+
+  badgeFail: {
+    backgroundColor: "rgba(239,68,68,0.10)",
+    borderColor: "rgba(239,68,68,0.18)",
+  },
+
   badgeText: {
     fontSize: 11,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.75)",
+    color: "rgba(15,23,42,0.75)",
   },
 
-  thumbBar: {
+  tileBar: {
     marginTop: 8,
     width: "100%",
     height: 8,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.10)",
+    backgroundColor: "rgba(15,23,42,0.10)",
     overflow: "hidden",
   },
-  thumbFill: {
+
+  tileFill: {
     height: "100%",
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.55)",
+    backgroundColor: "rgba(15,23,42,0.60)",
   },
 
-  thumbBottomRow: {
+  tileBottomRow: {
     marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
@@ -970,21 +1133,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
-  thumbMetaText: {
+  tilePct: {
     fontSize: 11,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.70)",
+    color: "rgba(15,23,42,0.75)",
   },
 
-  thumbMetaSub: {
+  tileHint: {
     flex: 1,
     textAlign: "right",
     fontSize: 10,
     fontWeight: "800",
-    color: "rgba(17,24,39,0.45)",
+    color: "rgba(15,23,42,0.45)",
   },
 
-  thumbError: {
+  tileErr: {
     flex: 1,
     textAlign: "right",
     fontSize: 10,

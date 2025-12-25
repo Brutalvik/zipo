@@ -1,6 +1,8 @@
 // app/host-onboarding.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,8 +13,6 @@ import {
   TextInput,
   View,
   Switch,
-  Alert,
-  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DateTimePicker, {
@@ -34,14 +34,15 @@ import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import { selectHost, setHost } from "@/redux/slices/hostSlice";
 import { patchHostProfile } from "@/services/hostApi";
 
+// -------------------------
+// Helpers
+// -------------------------
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
-
 function formatYmd(d: Date) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-
 function parseYmd(s: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
   if (!m) return null;
@@ -56,6 +57,170 @@ function parseYmd(s: string): Date | null {
   return dt;
 }
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function FieldLabel({
+  label,
+  required,
+  right,
+}: {
+  label: string;
+  required?: boolean;
+  right?: React.ReactNode;
+}) {
+  return (
+    <View style={styles.fieldLabelRow}>
+      <Text style={styles.label}>
+        {label}{" "}
+        {required ? (
+          <Text style={{ color: "rgba(239,68,68,0.85)" }}>*</Text>
+        ) : null}
+      </Text>
+      {right ? <View style={{ marginLeft: 10 }}>{right}</View> : null}
+    </View>
+  );
+}
+
+function Input({
+  value,
+  onChangeText,
+  placeholder,
+  disabled,
+  keyboardType,
+  maxLength,
+  autoCapitalize,
+  icon,
+}: {
+  value: string;
+  onChangeText?: (t: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  keyboardType?: any;
+  maxLength?: number;
+  autoCapitalize?: any;
+  icon?: keyof typeof Feather.glyphMap;
+}) {
+  return (
+    <View style={[styles.inputShell, disabled && styles.inputShellDisabled]}>
+      {icon ? (
+        <View style={styles.inputIcon}>
+          <Feather
+            name={icon}
+            size={16}
+            color={disabled ? "rgba(17,24,39,0.35)" : "rgba(17,24,39,0.55)"}
+          />
+        </View>
+      ) : null}
+
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="rgba(17,24,39,0.30)"
+        style={[styles.input, disabled && styles.inputDisabled]}
+        autoCapitalize={autoCapitalize ?? "none"}
+        autoCorrect={false}
+        editable={!disabled}
+        selectTextOnFocus={!disabled}
+        keyboardType={keyboardType}
+        maxLength={maxLength}
+      />
+      {disabled ? (
+        <View style={styles.lockPill}>
+          <Feather name="lock" size={12} color="rgba(17,24,39,0.45)" />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function SegButton({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected?: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={selected ? { selected: true } : {}}
+      style={({ pressed }) => [
+        styles.segBtn,
+        selected ? styles.segBtnOn : styles.segBtnOff,
+        pressed && { opacity: 0.92 },
+      ]}
+    >
+      <Text
+        style={[
+          styles.segText,
+          selected ? styles.segTextOn : styles.segTextOff,
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function SectionCard({
+  icon,
+  title,
+  subtitle,
+  children,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardIcon}>
+          <Feather name={icon} size={16} color="rgba(17,24,39,0.72)" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.cardTitle}>{title}</Text>
+          {subtitle ? <Text style={styles.cardSub}>{subtitle}</Text> : null}
+        </View>
+      </View>
+
+      <View style={{ height: 10 }} />
+      {children}
+    </View>
+  );
+}
+
+function ProgressPills({ step, total }: { step: number; total: number }) {
+  const pct = Math.round((step / total) * 100);
+  return (
+    <View style={styles.progressWrap}>
+      <View style={styles.stepPill}>
+        <Feather name="clipboard" size={14} color="rgba(17,24,39,0.75)" />
+        <Text style={styles.stepPillText}>Host onboarding</Text>
+      </View>
+
+      <View style={styles.progressPill}>
+        <View style={styles.progressBar}>
+          <View style={[styles.progressFill, { width: `${pct}%` }]} />
+        </View>
+        <Text style={styles.progressText}>
+          Step {step} of {total}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// -------------------------
+// Screen
+// -------------------------
 type Props = {
   initial?: Host | null;
   onContinue?: (data: any) => void;
@@ -258,6 +423,55 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
     expiryDate,
   ]);
 
+  // Modern, helpful "completion" for UX
+  const completion = useMemo(() => {
+    let score = 0;
+    let total = 10;
+
+    if ((userDisplayName || displayName).trim().length >= 2) score++;
+    if (countryCode.trim().length === 2) score++;
+    if (city.trim().length >= 2) score++;
+    if (area.trim().length >= 2) score++;
+    if (
+      Number.isFinite(parsedAdvanceNotice) &&
+      parsedAdvanceNotice >= 0 &&
+      parsedAdvanceNotice <= 168
+    )
+      score++;
+    if (
+      Number.isFinite(parsedMinTrip) &&
+      parsedMinTrip >= 1 &&
+      parsedMinTrip <= 30
+    )
+      score++;
+    if (
+      parsedMaxTrip === null ||
+      (Number.isFinite(parsedMaxTrip) &&
+        parsedMaxTrip >= parsedMinTrip &&
+        parsedMaxTrip <= 365)
+    )
+      score++;
+    if (hostType === "individual" || businessName.trim().length >= 2) score++;
+    if (licenseNumber.trim().length >= 4) score++;
+    if (formatYmd(expiryDate).length === 10) score++;
+
+    const pct = Math.round((score / total) * 100);
+    return { score, total, pct };
+  }, [
+    userDisplayName,
+    displayName,
+    countryCode,
+    city,
+    area,
+    parsedAdvanceNotice,
+    parsedMinTrip,
+    parsedMaxTrip,
+    hostType,
+    businessName,
+    licenseNumber,
+    expiryDate,
+  ]);
+
   useEffect(() => {
     if (userDisplayName) setDisplayName(userDisplayName);
   }, [userDisplayName]);
@@ -282,13 +496,10 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
         base_city: city.trim(),
         base_area: area.trim(),
 
-        advance_notice_hours: Math.max(
-          0,
-          Math.min(168, Number(parsedAdvanceNotice))
-        ),
+        advance_notice_hours: clamp(Number(parsedAdvanceNotice), 0, 168),
         instant_book_enabled: !!instantBookEnabled,
 
-        min_trip_days: Math.max(1, Math.min(30, Number(parsedMinTrip))),
+        min_trip_days: clamp(Number(parsedMinTrip), 1, 30),
         max_trip_days: parsedMaxTrip === null ? null : Number(parsedMaxTrip),
 
         cancellation_policy: cancellationPolicy,
@@ -323,58 +534,68 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
         style={styles.safe}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        {/* Modern background accents (no neon) */}
+        <View pointerEvents="none" style={styles.bgAccentA} />
+        <View pointerEvents="none" style={styles.bgAccentB} />
+
         <ScrollView
           style={styles.safe}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.topHeader}>
-            <View style={styles.stepPill}>
-              <Feather name="clipboard" size={14} color="rgba(17,24,39,0.75)" />
-              <Text style={styles.stepPillText}>Host onboarding</Text>
-            </View>
+          <ProgressPills step={1} total={3} />
 
-            <View style={styles.progressPill}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: "34%" }]} />
+          <View style={styles.hero}>
+            <Text style={styles.h1}>Set up your host profile</Text>
+            <Text style={styles.h2}>
+              This only takes a minute. You can edit everything later.
+            </Text>
+
+            <View style={styles.completionCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.completionTitle}>Profile completion</Text>
+                <Text style={styles.completionSub}>
+                  {completion.pct}% complete • step 1 prepares your hosting
+                  rules
+                </Text>
               </View>
-              <Text style={styles.progressText}>1 of 3</Text>
+              <View style={styles.ring}>
+                <Text style={styles.ringText}>{completion.pct}%</Text>
+              </View>
+              <View style={styles.completionBar}>
+                <View
+                  style={[
+                    styles.completionFill,
+                    { width: `${completion.pct}%` },
+                  ]}
+                />
+              </View>
             </View>
           </View>
 
-          <Text style={styles.h1}>Set up your host profile</Text>
-          <Text style={styles.h2}>
-            A few details to prepare your account. You can edit later.
-          </Text>
+          <SectionCard
+            icon="user"
+            title="Profile"
+            subtitle="How guests will see you"
+          >
+            <FieldLabel
+              label="DISPLAY NAME"
+              required
+              right={
+                <Feather name="lock" size={12} color="rgba(17,24,39,0.45)" />
+              }
+            />
+            <Input
+              value={displayName}
+              placeholder="e.g. Vikram"
+              disabled
+              autoCapitalize="words"
+              icon="user"
+            />
 
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather name="user" size={16} color="rgba(17,24,39,0.70)" />
-              </View>
-              <Text style={styles.cardTitle}>Profile</Text>
-            </View>
-
-            <View style={styles.labelInline}>
-              <Text style={styles.label}>DISPLAY NAME</Text>
-              <Feather name="lock" size={12} color="rgba(17,24,39,0.45)" />
-            </View>
-
-            <View style={[styles.inputWrap, styles.inputWrapDisabled]}>
-              <TextInput
-                value={displayName}
-                placeholder="e.g. Vikram"
-                placeholderTextColor="rgba(17,24,39,0.30)"
-                style={[styles.input, styles.inputDisabled]}
-                autoCapitalize="words"
-                autoCorrect={false}
-                editable={false}
-                selectTextOnFocus={false}
-              />
-            </View>
-
-            <Text style={styles.label}>HOST TYPE</Text>
+            <View style={{ height: 12 }} />
+            <FieldLabel label="HOST TYPE" required />
             <View style={styles.segRow}>
               <SegButton
                 label="Individual"
@@ -390,88 +611,68 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
 
             {hostType === "business" ? (
               <>
-                <Text style={styles.label}>BUSINESS NAME</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={businessName}
-                    onChangeText={setBusinessName}
-                    placeholder="e.g. Zipo Rentals Inc."
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
+                <View style={{ height: 12 }} />
+                <FieldLabel label="BUSINESS NAME" required />
+                <Input
+                  value={businessName}
+                  onChangeText={setBusinessName}
+                  placeholder="e.g. Zipo Rentals Inc."
+                  autoCapitalize="words"
+                  icon="briefcase"
+                />
               </>
             ) : null}
-          </View>
+          </SectionCard>
 
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather name="map-pin" size={16} color="rgba(17,24,39,0.70)" />
-              </View>
-              <Text style={styles.cardTitle}>Base location</Text>
-            </View>
-
+          <SectionCard
+            icon="map-pin"
+            title="Base location"
+            subtitle="Used for default pickup city and search"
+          >
             <View style={styles.row2}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>COUNTRY</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={countryCode}
-                    onChangeText={setCountryCode}
-                    placeholder="CA"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={2}
-                  />
-                </View>
+                <FieldLabel label="COUNTRY" required />
+                <Input
+                  value={countryCode}
+                  onChangeText={setCountryCode}
+                  placeholder="CA"
+                  autoCapitalize="characters"
+                  maxLength={2}
+                  icon="globe"
+                />
               </View>
 
               <View style={{ width: 12 }} />
 
               <View style={{ flex: 2 }}>
-                <Text style={styles.label}>CITY</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={city}
-                    onChangeText={setCity}
-                    placeholder="e.g. Calgary"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
+                <FieldLabel label="CITY" required />
+                <Input
+                  value={city}
+                  onChangeText={setCity}
+                  placeholder="e.g. Calgary"
+                  autoCapitalize="words"
+                  icon="map"
+                />
               </View>
             </View>
 
-            <Text style={styles.label}>AREA / NEIGHBORHOOD</Text>
-            <View style={styles.inputWrap}>
-              <TextInput
-                value={area}
-                onChangeText={setArea}
-                placeholder="e.g. Downtown"
-                placeholderTextColor="rgba(17,24,39,0.35)"
-                style={styles.input}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
-            </View>
-          </View>
+            <View style={{ height: 12 }} />
+            <FieldLabel label="AREA / NEIGHBORHOOD" required />
+            <Input
+              value={area}
+              onChangeText={setArea}
+              placeholder="e.g. Downtown"
+              autoCapitalize="words"
+              icon="navigation"
+            />
+          </SectionCard>
 
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather name="sliders" size={16} color="rgba(17,24,39,0.70)" />
-              </View>
-              <Text style={styles.cardTitle}>Preferences</Text>
-            </View>
-
-            <View style={styles.switchRow}>
+          <SectionCard
+            icon="sliders"
+            title="Preferences"
+            subtitle="Defaults for booking requests"
+          >
+            <View style={styles.switchCard}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.switchTitle}>Instant book</Text>
                 <Text style={styles.switchSub}>
@@ -484,51 +685,45 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
               />
             </View>
 
-            <Text style={styles.label}>ADVANCE NOTICE (HOURS)</Text>
-            <View style={styles.inputWrap}>
-              <TextInput
-                value={advanceNoticeHours}
-                onChangeText={setAdvanceNoticeHours}
-                placeholder="24"
-                placeholderTextColor="rgba(17,24,39,0.35)"
-                style={styles.input}
-                keyboardType="number-pad"
-              />
-            </View>
+            <View style={{ height: 12 }} />
+            <FieldLabel label="ADVANCE NOTICE (HOURS)" required />
+            <Input
+              value={advanceNoticeHours}
+              onChangeText={setAdvanceNoticeHours}
+              placeholder="24"
+              keyboardType="number-pad"
+              icon="clock"
+            />
 
+            <View style={{ height: 12 }} />
             <View style={styles.row2}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>MIN TRIP DAYS</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={minTripDays}
-                    onChangeText={setMinTripDays}
-                    placeholder="1"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    keyboardType="number-pad"
-                  />
-                </View>
+                <FieldLabel label="MIN TRIP DAYS" required />
+                <Input
+                  value={minTripDays}
+                  onChangeText={setMinTripDays}
+                  placeholder="1"
+                  keyboardType="number-pad"
+                  icon="calendar"
+                />
               </View>
 
               <View style={{ width: 12 }} />
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>MAX TRIP DAYS (OPTIONAL)</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={maxTripDays}
-                    onChangeText={setMaxTripDays}
-                    placeholder="e.g. 30"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    keyboardType="number-pad"
-                  />
-                </View>
+                <FieldLabel label="MAX TRIP DAYS (OPTIONAL)" />
+                <Input
+                  value={maxTripDays}
+                  onChangeText={setMaxTripDays}
+                  placeholder="e.g. 30"
+                  keyboardType="number-pad"
+                  icon="calendar"
+                />
               </View>
             </View>
 
-            <Text style={styles.label}>CANCELLATION POLICY</Text>
+            <View style={{ height: 12 }} />
+            <FieldLabel label="CANCELLATION POLICY" required />
             <View style={styles.segRow}>
               <SegButton
                 label="Flexible"
@@ -547,7 +742,8 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
               />
             </View>
 
-            <Text style={styles.label}>ALLOWED DRIVERS</Text>
+            <View style={{ height: 12 }} />
+            <FieldLabel label="ALLOWED DRIVERS" required />
             <View style={styles.segRow}>
               <SegButton
                 label="Only me"
@@ -560,107 +756,110 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
                 onPress={() => setAllowedDrivers("additional_allowed")}
               />
             </View>
-          </View>
+          </SectionCard>
 
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather
-                  name="credit-card"
-                  size={16}
-                  color="rgba(17,24,39,0.70)"
-                />
-              </View>
-              <Text style={styles.cardTitle}>Driver license</Text>
-            </View>
+          <SectionCard
+            icon="credit-card"
+            title="Driver license"
+            subtitle="Used for verification later"
+          >
+            <FieldLabel label="LICENSE NUMBER" required />
+            <Input
+              value={licenseNumber}
+              onChangeText={setLicenseNumber}
+              placeholder="e.g. 175178-5733"
+              autoCapitalize="characters"
+              icon="hash"
+            />
 
-            <Text style={styles.label}>LICENSE NUMBER</Text>
-            <View style={styles.inputWrap}>
-              <TextInput
-                value={licenseNumber}
-                onChangeText={setLicenseNumber}
-                placeholder="e.g. 175178-5733"
-                placeholderTextColor="rgba(17,24,39,0.35)"
-                style={styles.input}
-                autoCapitalize="characters"
-                autoCorrect={false}
-              />
-            </View>
-
+            <View style={{ height: 12 }} />
             <View style={styles.row2}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>COUNTRY</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={licenseCountry}
-                    onChangeText={setLicenseCountry}
-                    placeholder="CA"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={2}
-                  />
-                </View>
+                <FieldLabel label="COUNTRY" required />
+                <Input
+                  value={licenseCountry}
+                  onChangeText={setLicenseCountry}
+                  placeholder="CA"
+                  autoCapitalize="characters"
+                  maxLength={2}
+                  icon="globe"
+                />
               </View>
 
               <View style={{ width: 12 }} />
 
               <View style={{ flex: 1 }}>
-                <Text style={styles.label}>PROVINCE / STATE</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={licenseRegion}
-                    onChangeText={setLicenseRegion}
-                    placeholder="AB"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={3}
-                  />
-                </View>
+                <FieldLabel label="PROVINCE / STATE" required />
+                <Input
+                  value={licenseRegion}
+                  onChangeText={setLicenseRegion}
+                  placeholder="AB"
+                  autoCapitalize="characters"
+                  maxLength={3}
+                  icon="map-pin"
+                />
               </View>
             </View>
 
-            <Text style={styles.label}>EXPIRY DATE</Text>
+            <View style={{ height: 12 }} />
+            <FieldLabel label="EXPIRY DATE" required />
             <Pressable
               onPress={openPicker}
-              style={styles.inputWrap}
+              style={({ pressed }) => [
+                styles.inputShell,
+                pressed && { opacity: 0.92 },
+              ]}
               accessibilityRole="button"
             >
-              <Text style={[styles.input, styles.inputTextOnly]}>
+              <View style={styles.inputIcon}>
+                <Feather
+                  name="calendar"
+                  size={16}
+                  color="rgba(17,24,39,0.55)"
+                />
+              </View>
+              <Text style={[styles.input, { paddingVertical: 2 }]}>
                 {expiryYmd}
               </Text>
+              <Feather
+                name="chevron-down"
+                size={16}
+                color="rgba(17,24,39,0.45)"
+              />
             </Pressable>
 
             <Text style={styles.note}>
               We may request verification later. Your details are stored
               securely.
             </Text>
-          </View>
+          </SectionCard>
 
-          <View style={{ height: 12 }} />
+          <View style={{ height: 14 }} />
 
           {saving ? (
-            <View style={{ alignItems: "center", marginBottom: 10 }}>
+            <View style={styles.savingRow}>
               <ActivityIndicator />
+              <Text style={styles.savingText}>Saving…</Text>
             </View>
           ) : null}
 
-          <Button
-            title="Continue"
-            onPress={handleContinue}
-            variant="primary"
-            size="lg"
-            disabled={!isValid || saving}
-          />
-
-          <Text style={styles.nextHint}>Next: you’ll add your first car.</Text>
+          <View style={styles.bottomCard}>
+            <Button
+              title="Continue"
+              onPress={handleContinue}
+              variant="primary"
+              size="lg"
+              disabled={!isValid || saving}
+            />
+            <Text style={styles.nextHint}>
+              Next: you’ll add your first car.
+            </Text>
+          </View>
 
           <View style={{ height: 28 }} />
         </ScrollView>
 
+        {/* Date picker */}
         {Platform.OS === "android" && pickerOpen ? (
           <DateTimePicker
             value={expiryDate}
@@ -704,40 +903,28 @@ export default function HostOnboardingScreen({ initial, onContinue }: Props) {
   );
 }
 
-function SegButton({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected?: boolean;
-  onPress?: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={selected ? { selected: true } : {}}
-      style={({ pressed }) => [
-        styles.segBtn,
-        selected ? styles.segBtnOn : styles.segBtnOff,
-        pressed && { opacity: 0.92 },
-      ]}
-    >
-      <Text
-        style={[
-          styles.segText,
-          selected ? styles.segTextOn : styles.segTextOff,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F6F7FB" },
+
+  // Subtle modern background (no neon)
+  bgAccentA: {
+    position: "absolute",
+    top: -140,
+    left: -120,
+    width: 320,
+    height: 320,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.06)",
+  },
+  bgAccentB: {
+    position: "absolute",
+    bottom: -160,
+    right: -140,
+    width: 360,
+    height: 360,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.05)",
+  },
 
   content: {
     paddingHorizontal: 18,
@@ -745,14 +932,34 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
 
-  topHeader: {
+  // Hero
+  hero: {
+    marginBottom: 12,
+  },
+
+  h1: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#111827",
+    letterSpacing: -0.3,
+    marginBottom: 6,
+  },
+  h2: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.50)",
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+
+  // Progress
+  progressWrap: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
     gap: 12,
+    marginBottom: 14,
   },
-
   stepPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -760,7 +967,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.04)",
+    backgroundColor: "rgba(255,255,255,0.85)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
   },
@@ -769,22 +976,21 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "rgba(17,24,39,0.75)",
   },
-
   progressPill: {
     alignItems: "flex-end",
     gap: 6,
   },
   progressBar: {
-    width: 88,
+    width: 104,
     height: 8,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.08)",
+    backgroundColor: "rgba(17,24,39,0.10)",
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.55)",
+    backgroundColor: "rgba(17,24,39,0.62)",
   },
   progressText: {
     fontSize: 12,
@@ -792,55 +998,104 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.40)",
   },
 
-  h1: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: "#111827",
-    letterSpacing: -0.2,
-    marginBottom: 6,
+  // Completion
+  completionCard: {
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  h2: {
+  completionTitle: {
     fontSize: 13,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.88)",
+  },
+  completionSub: {
+    marginTop: 2,
+    fontSize: 12,
     fontWeight: "800",
     color: "rgba(17,24,39,0.45)",
-    lineHeight: 18,
-    marginBottom: 14,
+  },
+  ring: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.78)",
+  },
+  completionBar: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 12,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.10)",
+    overflow: "hidden",
+  },
+  completionFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.55)",
   },
 
+  // Card
   card: {
-    borderRadius: 20,
-    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.92)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     padding: 14,
     marginTop: 12,
   },
-
-  cardTitleRow: {
+  cardHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 10,
   },
-
-  iconChip: {
-    width: 34,
-    height: 34,
-    borderRadius: 14,
-    backgroundColor: "rgba(17,24,39,0.04)",
+  cardIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 16,
+    backgroundColor: "rgba(17,24,39,0.05)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     alignItems: "center",
     justifyContent: "center",
   },
-
   cardTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.90)",
+    color: "rgba(17,24,39,0.92)",
     letterSpacing: -0.1,
   },
+  cardSub: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.45)",
+  },
 
+  // Labels + inputs
+  fieldLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 8,
+  },
   label: {
     fontSize: 12,
     fontWeight: "900",
@@ -848,58 +1103,51 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
   },
 
-  labelInline: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 12,
-    marginBottom: 10,
-  },
-
-  row2: { flexDirection: "row", alignItems: "flex-start" },
-
-  inputWrap: {
-    borderRadius: 16,
+  inputShell: {
+    borderRadius: 18,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-
-  inputWrapDisabled: {
+  inputShellDisabled: {
     backgroundColor: "rgba(17,24,39,0.03)",
     borderColor: "rgba(17,24,39,0.10)",
   },
-
+  inputIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 14,
+    backgroundColor: "rgba(17,24,39,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   input: {
+    flex: 1,
     fontSize: 16,
     fontWeight: "900",
     color: "#111827",
     padding: 0,
   },
-
   inputDisabled: {
     color: "rgba(17,24,39,0.55)",
   },
-
-  inputTextOnly: {},
-
-  note: {
-    marginTop: 12,
-    fontSize: 12,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.40)",
-    lineHeight: 16,
+  lockPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
   },
 
-  nextHint: {
-    marginTop: 10,
-    textAlign: "center",
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.35)",
-  },
+  row2: { flexDirection: "row", alignItems: "flex-start" },
 
   segRow: {
     flexDirection: "row",
@@ -925,13 +1173,17 @@ const styles = StyleSheet.create({
   segTextOn: { color: "rgba(17,24,39,0.88)" },
   segTextOff: { color: "rgba(17,24,39,0.55)" },
 
-  switchRow: {
-    marginTop: 6,
+  // Switch block
+  switchCard: {
+    borderRadius: 18,
+    backgroundColor: "rgba(17,24,39,0.03)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+    padding: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 14,
-    paddingVertical: 8,
   },
   switchTitle: {
     fontSize: 14,
@@ -946,11 +1198,49 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
+  note: {
+    marginTop: 12,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.40)",
+    lineHeight: 16,
+  },
+
+  // Bottom
+  savingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 8,
+  },
+  savingText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.55)",
+  },
+
+  bottomCard: {
+    marginTop: 4,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    padding: 14,
+  },
+  nextHint: {
+    marginTop: 10,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.35)",
+  },
+
+  // iOS date sheet
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.35)",
   },
-
   sheet: {
     position: "absolute",
     left: 0,
@@ -963,7 +1253,6 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     paddingHorizontal: 14,
   },
-
   sheetHandle: {
     alignSelf: "center",
     width: 46,
@@ -972,20 +1261,17 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17,24,39,0.14)",
     marginBottom: 10,
   },
-
   sheetHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingBottom: 6,
   },
-
   sheetTitle: {
     fontSize: 14,
     fontWeight: "900",
     color: "#111827",
   },
-
   donePill: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -994,7 +1280,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
   },
-
   doneText: {
     fontSize: 13,
     fontWeight: "900",
