@@ -1,5 +1,5 @@
 // app/host-onboarding-photos.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -10,15 +10,16 @@ import {
   Text,
   View,
   Image,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
 
 import Button from "@/components/Button/Button";
 import { auth } from "@/services/firebase";
-import * as ImageManipulator from "expo-image-manipulator";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -32,8 +33,28 @@ type PickedPhoto = {
   mimeType?: string | null;
 };
 
+type PhotoStage =
+  | "queued"
+  | "requesting_url"
+  | "uploading"
+  | "finalizing"
+  | "done"
+  | "failed";
+
+type PhotoUiState = {
+  progress: number; // 0..1
+  stage: PhotoStage;
+  error?: string;
+};
+
 function uid() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function clamp01(n: any) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
 }
 
 async function getIdToken() {
@@ -49,16 +70,14 @@ function guessMime(uri: string, fallback?: string | null) {
   const u = uri.toLowerCase();
   if (u.endsWith(".png")) return "image/png";
   if (u.endsWith(".webp")) return "image/webp";
-  if (u.endsWith(".heic") || u.endsWith(".heif")) return "image/heic"; // will be rejected by backend allowlist
+  if (u.endsWith(".heic") || u.endsWith(".heif")) return "image/heic";
   return "image/jpeg";
 }
 
 async function ensurePngPhoto(p: PickedPhoto): Promise<PickedPhoto> {
-  // If already png, keep it
   const mime = guessMime(p.uri, p.mimeType);
   if (mime === "image/png") return p;
 
-  // Convert anything else (heic/jpg/webp/unknown) -> PNG
   const result = await ImageManipulator.manipulateAsync(p.uri, [], {
     format: ImageManipulator.SaveFormat.PNG,
   });
@@ -117,26 +136,42 @@ async function requestUploadUrl(args: {
   };
 }
 
-async function uploadToSignedUrl(args: {
+function uploadWithProgressXHR(args: {
   uploadUrl: string;
   uri: string;
   contentType: string;
+  onProgress?: (p: number) => void; // 0..1
 }) {
-  const fileRes = await fetch(args.uri);
-  const blob = await fileRes.blob();
+  return new Promise<void>(async (resolve, reject) => {
+    try {
+      const fileRes = await fetch(args.uri);
+      const blob = await fileRes.blob();
 
-  const up = await fetch(args.uploadUrl, {
-    method: "PUT",
-    headers: {
-      "Content-Type": args.contentType,
-    },
-    body: blob,
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", args.uploadUrl, true);
+      xhr.setRequestHeader("Content-Type", args.contentType);
+
+      xhr.upload.onprogress = (event) => {
+        if (!args.onProgress) return;
+        if (event.lengthComputable && event.total > 0) {
+          args.onProgress(event.loaded / event.total);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.responseText}`));
+      };
+
+      xhr.onerror = () => reject(new Error("Upload failed: network error"));
+      xhr.ontimeout = () => reject(new Error("Upload failed: timeout"));
+
+      xhr.send(blob);
+    } catch (e: any) {
+      reject(e);
+    }
   });
-
-  if (!up.ok) {
-    const t = await up.text().catch(() => "");
-    throw new Error(t || "Upload failed");
-  }
 }
 
 async function finalizePhotos(args: {
@@ -181,15 +216,55 @@ export default function HostOnboardingPhotosScreen() {
   const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // Per-photo UI state (progress + stage)
+  const [photoUi, setPhotoUi] = useState<Record<string, PhotoUiState>>({});
+  const [runStats, setRunStats] = useState<{
+    current?: string;
+    done: number;
+    total: number;
+  }>({ done: 0, total: 0 });
+
+  const cancelRef = useRef(false);
+
   const canContinue = photos.length >= 3;
 
+  const ctaLabel = useMemo(() => {
+    if (busy) return "Uploading...";
+    if (photos.length === 0) return "Add photos";
+    if (!canContinue) return `Add ${3 - photos.length} more photo(s)`;
+    return "Upload & Continue";
+  }, [busy, photos.length, canContinue]);
+
   const hint = useMemo(() => {
+    if (busy) {
+      return `Uploading ${runStats.done}/${runStats.total}…`;
+    }
     if (photos.length === 0) return "Add at least 3 photos to continue.";
     if (photos.length < 3)
       return `Add ${3 - photos.length} more photo(s) to continue.`;
     if (photos.length < 6) return "Nice! 5–6 photos perform best.";
     return "Great set. You’re ready to continue.";
-  }, [photos.length]);
+  }, [busy, photos.length, runStats.done, runStats.total]);
+
+  const overallProgress = useMemo(() => {
+    if (!photos.length) return 0;
+    const sum = photos.reduce(
+      (acc, p) => acc + (photoUi[p.id]?.progress ?? 0),
+      0
+    );
+    return clamp01(sum / photos.length);
+  }, [photos, photoUi]);
+
+  const setPhotoState = (id: string, patch: Partial<PhotoUiState>) => {
+    setPhotoUi((prev) => ({
+      ...prev,
+      [id]: {
+        progress: prev[id]?.progress ?? 0,
+        stage: prev[id]?.stage ?? "queued",
+        ...patch,
+      },
+    }));
+  };
 
   const requestPermissionIfNeeded = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -203,70 +278,84 @@ export default function HostOnboardingPhotosScreen() {
     return true;
   };
 
-  const handleAddPhotos = async () => {
-    try {
-      setBusy(true);
+  const pickPhotos = async () => {
+    const ok = await requestPermissionIfNeeded();
+    if (!ok) return;
 
-      const ok = await requestPermissionIfNeeded();
-      if (!ok) return;
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsMultipleSelection: true,
+      selectionLimit: 12,
+      quality: 0.9,
+    });
 
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: true,
-        selectionLimit: 10,
-        quality: 0.9,
-      });
+    if (res.canceled) return;
 
-      if (res.canceled) return;
+    const assets = res.assets ?? [];
+    const next: PickedPhoto[] = assets
+      .filter((a) => !!a?.uri)
+      .map((a) => ({
+        id: uid(),
+        uri: a.uri,
+        width: a.width,
+        height: a.height,
+        fileName: (a as any).fileName ?? null,
+        mimeType: (a as any).mimeType ?? null,
+      }));
 
-      const assets = res.assets ?? [];
-      const next: PickedPhoto[] = assets
-        .filter((a) => !!a?.uri)
-        .map((a) => ({
-          id: uid(),
-          uri: a.uri,
-          width: a.width,
-          height: a.height,
-          fileName: (a as any).fileName ?? null,
-          mimeType: (a as any).mimeType ?? null,
-        }));
+    setPhotos((prev) => {
+      const seen = new Set(prev.map((p) => p.uri));
+      const merged = [...prev];
+      for (const p of next) {
+        if (!seen.has(p.uri)) merged.push(p);
+      }
+      return merged.slice(0, 12);
+    });
 
-      setPhotos((prev) => {
-        const seen = new Set(prev.map((p) => p.uri));
-        const merged = [...prev];
-        for (const p of next) {
-          if (!seen.has(p.uri)) merged.push(p);
-        }
-        return merged.slice(0, 12);
-      });
-    } catch (e: any) {
-      console.warn("pick photos error", e?.message || e);
-      Alert.alert("Error", e?.message || "Could not pick photos.");
-    } finally {
-      setBusy(false);
-    }
+    // init UI state
+    setPhotoUi((prev) => {
+      const out = { ...prev };
+      for (const p of next) {
+        out[p.id] = out[p.id] ?? { progress: 0, stage: "queued" };
+      }
+      return out;
+    });
   };
 
-  const handleRemove = (id: string) => {
+  const removePhoto = (id: string) => {
+    if (busy) return;
     setPhotos((prev) => prev.filter((p) => p.id !== id));
+    setPhotoUi((prev) => {
+      const out = { ...prev };
+      delete out[id];
+      return out;
+    });
   };
 
-  const handleContinue = async () => {
+  const uploadAllAndContinue = async () => {
+    if (!carId) {
+      Alert.alert(
+        "Missing car id",
+        "Navigate here from the draft car step with ?carId=..."
+      );
+      return;
+    }
+
+    if (!canContinue) {
+      // single CTA behavior: if not enough photos, just open picker
+      await pickPhotos();
+      return;
+    }
+
+    cancelRef.current = false;
+    setBusy(true);
+    setRunStats({ done: 0, total: photos.length });
+
     try {
-      if (!carId) {
-        Alert.alert(
-          "Missing car id",
-          "Navigate here from the draft car step with ?carId=..."
-        );
-        return;
+      // reset UI
+      for (const p of photos) {
+        setPhotoState(p.id, { stage: "queued", progress: 0, error: "" });
       }
-
-      if (!canContinue) {
-        Alert.alert("Add more photos", "Please add at least 3 photos.");
-        return;
-      }
-
-      setBusy(true);
 
       const toFinalize: Array<{
         id: string;
@@ -277,32 +366,65 @@ export default function HostOnboardingPhotosScreen() {
         height?: number;
       }> = [];
 
-      for (const raw of photos) {
-        const p = await ensurePngPhoto(raw);
-        const mimeType = "image/png";
+      // Upload sequentially (less memory, clearer progress)
+      for (let i = 0; i < photos.length; i++) {
+        if (cancelRef.current) throw new Error("Upload cancelled");
 
-        const { uploadUrl, photo } = await requestUploadUrl({
-          carId,
-          mimeType,
-          fileName: p.fileName ?? null,
-        });
+        const raw = photos[i];
+        setRunStats({ current: raw.id, done: i, total: photos.length });
 
-        await uploadToSignedUrl({
-          uploadUrl,
-          uri: p.uri,
-          contentType: mimeType,
-        });
+        try {
+          setPhotoState(raw.id, { stage: "requesting_url", progress: 0.02 });
 
-        toFinalize.push({
-          id: photo.id,
-          path: photo.path,
-          url: photo.url,
-          mime: photo.mime || mimeType,
-          width: p.width,
-          height: p.height,
-        });
+          const p = await ensurePngPhoto(raw);
+          const mimeType = "image/png";
+
+          const { uploadUrl, photo } = await requestUploadUrl({
+            carId,
+            mimeType,
+            fileName: p.fileName ?? null,
+          });
+
+          setPhotoState(raw.id, { stage: "uploading", progress: 0.08 });
+
+          await uploadWithProgressXHR({
+            uploadUrl,
+            uri: p.uri,
+            contentType: mimeType,
+            onProgress: (frac) => {
+              // map 0..1 -> 0.10..0.92 for UI
+              setPhotoState(raw.id, {
+                progress: 0.1 + 0.82 * clamp01(frac),
+              });
+            },
+          });
+
+          // Add to finalize list (we finalize once at the end)
+          setPhotoState(raw.id, { stage: "finalizing", progress: 0.95 });
+
+          toFinalize.push({
+            id: photo.id,
+            path: photo.path,
+            url: photo.url,
+            mime: photo.mime || mimeType,
+            width: raw.width,
+            height: raw.height,
+          });
+
+          setPhotoState(raw.id, { stage: "done", progress: 1 });
+        } catch (e: any) {
+          setPhotoState(raw.id, {
+            stage: "failed",
+            progress: photoUi[raw.id]?.progress ?? 0,
+            error: e?.message || "Upload failed",
+          });
+          throw e; // stop the whole flow (keeps failure visible)
+        } finally {
+          setRunStats({ current: raw.id, done: i + 1, total: photos.length });
+        }
       }
 
+      // Finalize once: updates DB image_gallery, has_image, image_path cover
       await finalizePhotos({ carId, photos: toFinalize });
 
       Alert.alert("Done", "Photos uploaded. Your draft car is updated.");
@@ -318,7 +440,26 @@ export default function HostOnboardingPhotosScreen() {
       );
     } finally {
       setBusy(false);
+      setRunStats({ done: 0, total: 0 });
     }
+  };
+
+  const topRightActionLabel = useMemo(() => {
+    if (busy) return "Stop";
+    if (photos.length === 0) return "";
+    return "Add";
+  }, [busy, photos.length]);
+
+  const onTopRightAction = async () => {
+    if (busy) {
+      cancelRef.current = true;
+      Alert.alert(
+        "Stopping",
+        "We will stop after the current upload finishes."
+      );
+      return;
+    }
+    await pickPhotos();
   };
 
   return (
@@ -332,18 +473,32 @@ export default function HostOnboardingPhotosScreen() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
+          {/* Header */}
           <View style={styles.topHeader}>
             <View style={styles.stepPill}>
               <Feather name="image" size={14} color="rgba(17,24,39,0.75)" />
               <Text style={styles.stepPillText}>Add photos</Text>
             </View>
 
-            <View style={styles.progressPill}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: "100%" }]} />
-              </View>
-              <Text style={styles.progressText}>3 of 3</Text>
-            </View>
+            {!!topRightActionLabel && (
+              <Pressable
+                onPress={onTopRightAction}
+                style={({ pressed }) => [
+                  styles.topRightBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                accessibilityRole="button"
+              >
+                <Feather
+                  name={busy ? "x" : "plus"}
+                  size={16}
+                  color="rgba(17,24,39,0.85)"
+                />
+                <Text style={styles.topRightBtnText}>
+                  {topRightActionLabel}
+                </Text>
+              </Pressable>
+            )}
           </View>
 
           <Text style={styles.h1}>Upload car photos</Text>
@@ -351,6 +506,7 @@ export default function HostOnboardingPhotosScreen() {
             Clear photos build trust and increase bookings.
           </Text>
 
+          {/* Guidance card */}
           <View style={styles.card}>
             <View style={styles.cardTitleRow}>
               <View style={styles.iconChip}>
@@ -361,68 +517,136 @@ export default function HostOnboardingPhotosScreen() {
 
             <Text style={styles.note}>{hint}</Text>
 
-            <View style={{ height: 12 }} />
-
-            <Button
-              title={photos.length ? "Add more photos" : "Add photos"}
-              onPress={handleAddPhotos}
-              variant="primary"
-              size="lg"
-              disabled={busy}
-              isLoading={busy}
-            />
-
-            <Text style={styles.tip}>
-              Tip: include front, back, side, interior, and odometer.
-            </Text>
+            {/* Overall progress */}
+            {busy ? (
+              <View style={{ marginTop: 12 }}>
+                <View style={styles.overallBar}>
+                  <View
+                    style={[
+                      styles.overallFill,
+                      { width: `${Math.round(overallProgress * 100)}%` },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.overallText}>
+                  Overall: {Math.round(overallProgress * 100)}%
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.tip}>
+                Tip: include front, back, side, interior, and odometer.
+              </Text>
+            )}
           </View>
 
+          {/* Grid */}
           <View style={styles.gridWrap}>
             {photos.length === 0 ? (
               <View style={styles.emptyState}>
                 <Feather name="image" size={20} color="rgba(17,24,39,0.35)" />
                 <Text style={styles.emptyTitle}>No photos yet</Text>
                 <Text style={styles.emptySub}>
-                  Tap “Add photos” to choose images from your phone.
+                  Tap the button below to choose images from your phone.
                 </Text>
               </View>
             ) : (
               <View style={styles.grid}>
-                {photos.map((p) => (
-                  <View key={p.id} style={styles.thumbWrap}>
-                    <Image source={{ uri: p.uri }} style={styles.thumb} />
-                    <Pressable
-                      onPress={() => handleRemove(p.id)}
-                      style={({ pressed }) => [
-                        styles.removeBtn,
-                        pressed && { opacity: 0.85 },
-                      ]}
-                      accessibilityRole="button"
-                      accessibilityLabel="Remove photo"
-                    >
-                      <Feather name="x" size={14} color="#111827" />
-                    </Pressable>
-                  </View>
-                ))}
+                {photos.map((p) => {
+                  const ui = photoUi[p.id];
+                  const stage = ui?.stage ?? "queued";
+                  const prog = clamp01(ui?.progress ?? 0);
+
+                  return (
+                    <View key={p.id} style={styles.thumbWrap}>
+                      <Image source={{ uri: p.uri }} style={styles.thumb} />
+
+                      {/* Remove */}
+                      {!busy && (
+                        <Pressable
+                          onPress={() => removePhoto(p.id)}
+                          style={({ pressed }) => [
+                            styles.removeBtn,
+                            pressed && { opacity: 0.85 },
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Remove photo"
+                        >
+                          <Feather name="x" size={14} color="#111827" />
+                        </Pressable>
+                      )}
+
+                      {/* Progress overlay */}
+                      {busy && (
+                        <View style={styles.thumbOverlay}>
+                          <View style={styles.thumbBar}>
+                            <View
+                              style={[
+                                styles.thumbFill,
+                                { width: `${Math.round(prog * 100)}%` },
+                              ]}
+                            />
+                          </View>
+
+                          <View style={styles.thumbMetaRow}>
+                            <Text style={styles.thumbMetaText}>
+                              {stage === "requesting_url"
+                                ? "Preparing…"
+                                : stage === "uploading"
+                                ? `Uploading ${Math.round(prog * 100)}%`
+                                : stage === "finalizing"
+                                ? "Finalizing…"
+                                : stage === "done"
+                                ? "Done"
+                                : stage === "failed"
+                                ? "Failed"
+                                : "Queued"}
+                            </Text>
+
+                            {stage === "uploading" ? (
+                              <ActivityIndicator />
+                            ) : stage === "done" ? (
+                              <Feather name="check" size={16} color="#111827" />
+                            ) : stage === "failed" ? (
+                              <Feather
+                                name="alert-circle"
+                                size={16}
+                                color="#991B1B"
+                              />
+                            ) : null}
+                          </View>
+
+                          {stage === "failed" && ui?.error ? (
+                            <Text style={styles.thumbError} numberOfLines={2}>
+                              {ui.error}
+                            </Text>
+                          ) : null}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
               </View>
             )}
           </View>
 
           <View style={{ height: 12 }} />
 
+          {/* Single CTA (combined) */}
           <Button
-            title="Continue"
-            onPress={handleContinue}
+            title={ctaLabel}
+            onPress={uploadAllAndContinue}
             variant="primary"
             size="lg"
-            disabled={!canContinue || busy}
+            disabled={busy}
             isLoading={busy}
           />
 
           <Pressable
             onPress={() => router.back()}
+            disabled={busy}
             style={({ pressed }) => [
               styles.backLink,
+              busy && { opacity: 0.5 },
               pressed && { opacity: 0.8 },
             ]}
           >
@@ -465,23 +689,21 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.75)",
   },
 
-  progressPill: { alignItems: "flex-end", gap: 6 },
-  progressBar: {
-    width: 88,
-    height: 8,
+  topRightBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.08)",
-    overflow: "hidden",
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
   },
-  progressFill: {
-    height: "100%",
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.55)",
-  },
-  progressText: {
+  topRightBtnText: {
     fontSize: 12,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.40)",
+    color: "rgba(17,24,39,0.85)",
   },
 
   h1: {
@@ -548,6 +770,25 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
+  overallBar: {
+    width: "100%",
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.08)",
+    overflow: "hidden",
+  },
+  overallFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.55)",
+  },
+  overallText: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.55)",
+  },
+
   gridWrap: {
     marginTop: 12,
     borderRadius: 20,
@@ -564,7 +805,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
-  emptyTitle: { fontSize: 14, fontWeight: "900", color: "rgba(17,24,39,0.70)" },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
+  },
   emptySub: {
     textAlign: "center",
     fontSize: 12,
@@ -600,6 +845,49 @@ const styles = StyleSheet.create({
     borderColor: "rgba(0,0,0,0.08)",
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  thumbOverlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: 8,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(0,0,0,0.06)",
+  },
+
+  thumbBar: {
+    width: "100%",
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.10)",
+    overflow: "hidden",
+  },
+  thumbFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.55)",
+  },
+
+  thumbMetaRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  thumbMetaText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
+  },
+  thumbError: {
+    marginTop: 6,
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#991B1B",
   },
 
   backLink: {
