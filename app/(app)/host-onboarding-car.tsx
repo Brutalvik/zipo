@@ -1,5 +1,5 @@
 // app/host-onboarding-car.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -20,47 +20,373 @@ import Button from "@/components/Button/Button";
 import { useAppSelector } from "@/redux/hooks";
 import { selectHost } from "@/redux/slices/hostSlice";
 import { createHostCarDraft } from "@/services/hostApi";
+import PickerModal from "@/components/common/PickerModal";
 
 type Transmission = "automatic" | "manual";
 type VehicleType = "sedan" | "suv" | "truck" | "van";
+
+type SelectOption = { label: string; value: string };
+
+const VEHICLE_TYPES: Array<{ key: VehicleType; label: string; icon: any }> = [
+  { key: "sedan", label: "Sedan", icon: "navigation" },
+  { key: "suv", label: "SUV", icon: "truck" },
+  { key: "truck", label: "Truck", icon: "package" },
+  { key: "van", label: "Van", icon: "box" },
+];
+
+const TRANSMISSIONS: Array<{ key: Transmission; label: string }> = [
+  { key: "automatic", label: "Automatic" },
+  { key: "manual", label: "Manual" },
+];
+
+// Curated + searchable list. Supports any brand via custom input.
+const POPULAR_BRANDS = [
+  "Toyota",
+  "Honda",
+  "Ford",
+  "Chevrolet",
+  "Nissan",
+  "Hyundai",
+  "Kia",
+  "Volkswagen",
+  "BMW",
+  "Mercedes-Benz",
+  "Audi",
+  "Tesla",
+  "Lexus",
+  "Mazda",
+  "Subaru",
+  "Jeep",
+  "Ram",
+  "GMC",
+  "Volvo",
+  "Porsche",
+];
+
+const ALL_BRANDS = [
+  "Abarth",
+  "Acura",
+  "Aiways",
+  "Alfa Romeo",
+  "Alpine",
+  "Aston Martin",
+  "Audi",
+  "BAIC",
+  "Bentley",
+  "BMW",
+  "Bugatti",
+  "Buick",
+  "BYD",
+  "Cadillac",
+  "Changan",
+  "Chery",
+  "Chevrolet",
+  "Chrysler",
+  "Citroën",
+  "Cupra",
+  "Dacia",
+  "Daewoo",
+  "Daihatsu",
+  "Datsun",
+  "Dodge",
+  "DS Automobiles",
+  "Ferrari",
+  "Fiat",
+  "Ford",
+  "GAC",
+  "Genesis",
+  "Geely",
+  "GMC",
+  "Great Wall",
+  "Haval",
+  "Holden",
+  "Honda",
+  "Hummer",
+  "Hyundai",
+  "Infiniti",
+  "Isuzu",
+  "Jaguar",
+  "Jeep",
+  "Kia",
+  "Koenigsegg",
+  "Lada",
+  "Lamborghini",
+  "Land Rover",
+  "Lexus",
+  "Lincoln",
+  "Lotus",
+  "Lucid",
+  "Mahindra",
+  "Maserati",
+  "Maybach",
+  "Mazda",
+  "McLaren",
+  "Mercedes-Benz",
+  "MG",
+  "Mini",
+  "Mitsubishi",
+  "Nio",
+  "Nissan",
+  "Opel",
+  "Pagani",
+  "Peugeot",
+  "Polestar",
+  "Porsche",
+  "Proton",
+  "Ram",
+  "Renault",
+  "Rivian",
+  "Rolls-Royce",
+  "Saab",
+  "Seat",
+  "Skoda",
+  "Smart",
+  "SsangYong",
+  "Subaru",
+  "Suzuki",
+  "Tata",
+  "Tesla",
+  "Toyota",
+  "Vauxhall",
+  "VinFast",
+  "Volkswagen",
+  "Volvo",
+  "Wuling",
+];
+
+const CA_PROVINCES = [
+  "AB",
+  "BC",
+  "MB",
+  "NB",
+  "NL",
+  "NS",
+  "NT",
+  "NU",
+  "ON",
+  "PE",
+  "QC",
+  "SK",
+  "YT",
+] as const;
+
+type CAProvince = (typeof CA_PROVINCES)[number];
+
+function yearsOptions(): SelectOption[] {
+  const now = new Date().getFullYear();
+  const min = 1990;
+  const max = now + 1;
+  const out: SelectOption[] = [];
+  for (let y = max; y >= min; y--)
+    out.push({ label: String(y), value: String(y) });
+  return out;
+}
+
+function autoTitleFrom(year: string, make: string, model: string) {
+  const base = [year.trim(), make.trim(), model.trim()]
+    .filter(Boolean)
+    .join(" ");
+  return base || "Your car listing";
+}
+
+function normalizePostal(input: string) {
+  const s = (input || "").toUpperCase().replace(/\s+/g, "").trim();
+  if (s.length !== 6) return input.toUpperCase();
+  return `${s.slice(0, 3)} ${s.slice(3)}`;
+}
+
+function isValidCanadianPostal(input: string) {
+  const s = (input || "").trim();
+  return /^[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d$/.test(s);
+}
+
+function buildFullCaAddress(args: {
+  line1: string;
+  line2?: string;
+  city: string;
+  province: string;
+  postal: string;
+}) {
+  const l1 = args.line1.trim();
+  const l2 = (args.line2 || "").trim();
+  const city = args.city.trim();
+  const prov = args.province.trim().toUpperCase();
+  const postal = normalizePostal(args.postal.trim());
+  return `${l1}${l2 ? ", " + l2 : ""}, ${city}, ${prov} ${postal}, CA`;
+}
+
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: any;
+  title: string;
+  subtitle?: string;
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionIcon}>
+        <Feather name={icon} size={16} color="rgba(17,24,39,0.78)" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function SegPill({
+  label,
+  selected,
+  onPress,
+  icon,
+}: {
+  label: string;
+  selected?: boolean;
+  onPress?: () => void;
+  icon?: any;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={selected ? { selected: true } : {}}
+      style={({ pressed }) => [
+        styles.pill,
+        selected ? styles.pillOn : styles.pillOff,
+        pressed && { opacity: 0.92 },
+      ]}
+    >
+      {icon ? (
+        <Feather
+          name={icon}
+          size={14}
+          color={selected ? "#111827" : "rgba(17,24,39,0.60)"}
+        />
+      ) : null}
+      <Text style={[styles.pillText, selected && styles.pillTextOn]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function SelectField({
+  label,
+  valueText,
+  placeholder,
+  onPress,
+}: {
+  label: string;
+  valueText?: string;
+  placeholder?: string;
+  onPress?: () => void;
+}) {
+  return (
+    <View style={{ marginTop: 14 }}>
+      <Text style={styles.label}>{label}</Text>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.selectWrap,
+          pressed && { opacity: 0.98 },
+        ]}
+        accessibilityRole="button"
+      >
+        <Text
+          style={[
+            styles.selectText,
+            !valueText ? { color: "rgba(17,24,39,0.35)" } : null,
+          ]}
+          numberOfLines={1}
+        >
+          {valueText || placeholder || "Select"}
+        </Text>
+
+        <View style={styles.selectRight}>
+          <Feather name="chevron-down" size={18} color="rgba(17,24,39,0.55)" />
+        </View>
+      </Pressable>
+    </View>
+  );
+}
 
 export default function HostOnboardingCarScreen() {
   const router = useRouter();
   const host = useAppSelector(selectHost);
 
-  const defaultCountry = (host?.base_country_code ?? "CA").toString();
   const defaultCity = (host?.base_city ?? "").toString();
-  const defaultArea = (host?.base_area ?? "").toString();
+  const defaultProvince = (
+    host?.verification?.license?.region ?? "AB"
+  ).toString();
 
   const [saving, setSaving] = useState(false);
 
+  // Vehicle
   const [year, setYear] = useState("");
   const [make, setMake] = useState("");
   const [model, setModel] = useState("");
+
   const [vehicleType, setVehicleType] = useState<VehicleType>("sedan");
   const [transmission, setTransmission] = useState<Transmission>("automatic");
   const [seats, setSeats] = useState("5");
 
-  const [title, setTitle] = useState("");
+  // Title (auto, read-only)
+  const titleAuto = useMemo(
+    () => autoTitleFrom(year, make, model),
+    [year, make, model]
+  );
+
+  // Pricing
   const [pricePerDay, setPricePerDay] = useState("");
 
-  const [countryCode, setCountryCode] = useState(defaultCountry);
+  // Address (Canada)
+  const countryCode = "CA";
+  const [address1, setAddress1] = useState(""); // street address
+  const [address2, setAddress2] = useState(""); // unit / apt (optional)
   const [city, setCity] = useState(defaultCity);
-  const [area, setArea] = useState(defaultArea);
+  const [province, setProvince] = useState<CAProvince>(
+    (CA_PROVINCES.includes(defaultProvince as any)
+      ? defaultProvince
+      : "AB") as CAProvince
+  );
+  const [postalCode, setPostalCode] = useState("");
+
+  // Pickers
+  const [yearOpen, setYearOpen] = useState(false);
+  const [makeOpen, setMakeOpen] = useState(false);
+  const [provinceOpen, setProvinceOpen] = useState(false);
+
+  const yearList = useMemo(() => yearsOptions(), []);
+
+  const makeOptions = useMemo(() => {
+    const popular = POPULAR_BRANDS.map((b) => ({ label: b, value: b }));
+    const all = Array.from(new Set(ALL_BRANDS))
+      .sort((a, b) => a.localeCompare(b))
+      .map((b) => ({ label: b, value: b }));
+
+    const map = new Map<string, SelectOption>();
+    for (const o of [...popular, ...all]) map.set(o.value, o);
+    return Array.from(map.values());
+  }, []);
+
+  const provinceOptions = useMemo<SelectOption[]>(
+    () =>
+      CA_PROVINCES.map((p) => ({
+        value: p,
+        label: p,
+      })),
+    []
+  );
 
   const parsedYear = useMemo(() => Number(year), [year]);
   const parsedSeats = useMemo(() => Number(seats), [seats]);
   const parsedPrice = useMemo(() => Number(pricePerDay), [pricePerDay]);
 
-  const autoTitle = useMemo(() => {
-    const y = year.trim();
-    const mk = make.trim();
-    const md = model.trim();
-    const base = [y, mk, md].filter(Boolean).join(" ");
-    return base || "Your car listing";
-  }, [year, make, model]);
-
   const isValid = useMemo(() => {
+    // Vehicle
     const yOk =
       Number.isFinite(parsedYear) &&
       parsedYear >= 1990 &&
@@ -75,11 +401,11 @@ export default function HostOnboardingCarScreen() {
     const priceOk =
       Number.isFinite(parsedPrice) && parsedPrice >= 10 && parsedPrice <= 1000;
 
-    const ccOk = countryCode.trim().length === 2;
+    // Address (Canada)
+    const address1Ok = address1.trim().length >= 5;
     const cityOk = city.trim().length >= 2;
-    const areaOk = area.trim().length >= 2;
-
-    const titleOk = title.trim().length >= 6 || (makeOk && modelOk);
+    const provinceOk = CA_PROVINCES.includes(province);
+    const postalOk = isValidCanadianPostal(postalCode);
 
     return (
       yOk &&
@@ -87,10 +413,10 @@ export default function HostOnboardingCarScreen() {
       modelOk &&
       seatsOk &&
       priceOk &&
-      ccOk &&
+      address1Ok &&
       cityOk &&
-      areaOk &&
-      titleOk
+      provinceOk &&
+      postalOk
     );
   }, [
     parsedYear,
@@ -98,13 +424,13 @@ export default function HostOnboardingCarScreen() {
     model,
     parsedSeats,
     parsedPrice,
-    countryCode,
+    address1,
     city,
-    area,
-    title,
+    province,
+    postalCode,
   ]);
 
-  const handleCreateDraft = async () => {
+  const handleCreateDraft = useCallback(async () => {
     try {
       if (!isValid) {
         Alert.alert(
@@ -116,25 +442,34 @@ export default function HostOnboardingCarScreen() {
 
       setSaving(true);
 
-      // Your backend sanitizeCarCreate expects flat fields:
-      // title, vehicle_type, transmission, seats, price_per_day, country_code, city, area
-      // It does NOT accept year/make/model right now — so we store those in features.vehicle
+      const fullAddress = buildFullCaAddress({
+        line1: address1,
+        line2: address2,
+        city,
+        province,
+        postal: postalCode,
+      });
+
+      /**
+       * Backend compatibility:
+       * - Your API currently expects city + area + full_address.
+       * - We map `area` to the province for now (AB/BC/etc.)
+       * - Store the full Canadian address in `full_address`.
+       * - Also store structured address in features.address for future.
+       */
       const payload = {
-        title: (title.trim() || autoTitle).trim(),
+        title: titleAuto.trim(),
+
         vehicle_type: vehicleType,
         transmission,
         seats: Number(parsedSeats),
         price_per_day: Number(parsedPrice),
 
-        country_code: countryCode.trim().toUpperCase(),
+        country_code: countryCode,
         city: city.trim(),
-        area: area.trim(),
+        area: province, // ✅ temporary mapping for existing backend schema
+        full_address: fullAddress,
 
-        full_address: `${area.trim()}, ${city.trim()}, ${countryCode
-          .trim()
-          .toUpperCase()}`,
-
-        // ✅ satisfy DB constraint (placeholder for draft)
         image_path: "draft/placeholder.jpg",
         has_image: false,
         image_public: true,
@@ -145,15 +480,21 @@ export default function HostOnboardingCarScreen() {
             make: make.trim(),
             model: model.trim(),
           },
+          address: {
+            country_code: "CA",
+            line1: address1.trim(),
+            line2: address2.trim() || null,
+            city: city.trim(),
+            province,
+            postal_code: normalizePostal(postalCode),
+            full_address: fullAddress,
+          },
         },
       };
 
       const created = await createHostCarDraft(payload);
-
       const carId = created?.id;
-      if (!carId) {
-        throw new Error("Car created but no id returned.");
-      }
+      if (!carId) throw new Error("Car created but no id returned.");
 
       router.push(`/host-onboarding-photos?carId=${encodeURIComponent(carId)}`);
     } catch (e: any) {
@@ -162,7 +503,23 @@ export default function HostOnboardingCarScreen() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [
+    isValid,
+    titleAuto,
+    vehicleType,
+    transmission,
+    parsedSeats,
+    parsedPrice,
+    address1,
+    address2,
+    city,
+    province,
+    postalCode,
+    parsedYear,
+    make,
+    model,
+    router,
+  ]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -174,12 +531,14 @@ export default function HostOnboardingCarScreen() {
           style={styles.safe}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}
         >
+          {/* Top header */}
           <View style={styles.topHeader}>
             <View style={styles.stepPill}>
-              <Feather name="truck" size={14} color="rgba(17,24,39,0.75)" />
-              <Text style={styles.stepPillText}>Add your first car</Text>
+              <Feather name="truck" size={14} color="rgba(17,24,39,0.78)" />
+              <Text style={styles.stepPillText}>Add car</Text>
             </View>
 
             <View style={styles.progressPill}>
@@ -190,183 +549,170 @@ export default function HostOnboardingCarScreen() {
             </View>
           </View>
 
-          <Text style={styles.h1}>Create a draft listing</Text>
+          <Text style={styles.h1}>Car information</Text>
           <Text style={styles.h2}>
-            Keep it simple. You’ll add photos and availability next.
+            Start with the basics. You’ll add photos next.
           </Text>
 
+          {/* Vehicle details */}
           <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather
-                  name="settings"
-                  size={16}
-                  color="rgba(17,24,39,0.70)"
+            <SectionHeader
+              icon="settings"
+              title="Vehicle details"
+              subtitle="Year + brand + model"
+            />
+
+            <SelectField
+              label="YEAR"
+              valueText={year}
+              placeholder="Select year"
+              onPress={() => setYearOpen(true)}
+            />
+
+            <SelectField
+              label="MAKE (BRAND)"
+              valueText={make}
+              placeholder="Select make"
+              onPress={() => setMakeOpen(true)}
+            />
+
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.label}>MODEL</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  value={model}
+                  onChangeText={setModel}
+                  placeholder="e.g. Corolla"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  style={styles.input}
+                  autoCapitalize="words"
+                  autoCorrect={false}
                 />
               </View>
-              <Text style={styles.cardTitle}>Vehicle details</Text>
             </View>
 
-            <View style={styles.row2}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>YEAR</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={year}
-                    onChangeText={setYear}
-                    placeholder="e.g. 2020"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    keyboardType="number-pad"
-                    maxLength={4}
-                  />
-                </View>
-              </View>
+            <View style={styles.hr} />
 
-              <View style={{ width: 12 }} />
-
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>SEATS</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={seats}
-                    onChangeText={setSeats}
-                    placeholder="5"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    keyboardType="number-pad"
-                    maxLength={1}
-                  />
-                </View>
-              </View>
-            </View>
-
-            <View style={styles.row2}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>MAKE</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={make}
-                    onChangeText={setMake}
-                    placeholder="e.g. Toyota"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-
-              <View style={{ width: 12 }} />
-
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>MODEL</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={model}
-                    onChangeText={setModel}
-                    placeholder="e.g. Corolla"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                </View>
-              </View>
-            </View>
-
-            <Text style={styles.label}>VEHICLE TYPE</Text>
-            <View style={styles.segRow}>
-              {(["sedan", "suv", "truck", "van"] as VehicleType[]).map((t) => (
-                <SegButton
-                  key={t}
-                  label={t.toUpperCase()}
-                  selected={vehicleType === t}
-                  onPress={() => setVehicleType(t)}
+            <Text style={[styles.label, { marginTop: 2 }]}>VEHICLE TYPE</Text>
+            <View style={styles.pillRow}>
+              {VEHICLE_TYPES.map((t) => (
+                <SegPill
+                  key={t.key}
+                  label={t.label}
+                  icon={t.icon}
+                  selected={vehicleType === t.key}
+                  onPress={() => setVehicleType(t.key)}
                 />
               ))}
             </View>
 
-            <Text style={styles.label}>TRANSMISSION</Text>
-            <View style={styles.segRow}>
-              <SegButton
-                label="AUTOMATIC"
-                selected={transmission === "automatic"}
-                onPress={() => setTransmission("automatic")}
-              />
-              <SegButton
-                label="MANUAL"
-                selected={transmission === "manual"}
-                onPress={() => setTransmission("manual")}
-              />
+            <Text style={[styles.label, { marginTop: 14 }]}>TRANSMISSION</Text>
+            <View style={styles.pillRow}>
+              {TRANSMISSIONS.map((t) => (
+                <SegPill
+                  key={t.key}
+                  label={t.label}
+                  selected={transmission === t.key}
+                  onPress={() => setTransmission(t.key)}
+                />
+              ))}
             </View>
-          </View>
 
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather
-                  name="file-text"
-                  size={16}
-                  color="rgba(17,24,39,0.70)"
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.label}>SEATS</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  value={seats}
+                  onChangeText={(v) =>
+                    setSeats(v.replace(/[^\d]/g, "").slice(0, 1))
+                  }
+                  placeholder="5"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  style={styles.input}
+                  keyboardType="number-pad"
+                  maxLength={1}
                 />
               </View>
-              <Text style={styles.cardTitle}>Listing basics</Text>
-            </View>
-
-            <Text style={styles.label}>TITLE</Text>
-            <View style={styles.inputWrap}>
-              <TextInput
-                value={title}
-                onChangeText={setTitle}
-                placeholder={autoTitle}
-                placeholderTextColor="rgba(17,24,39,0.35)"
-                style={styles.input}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
-            </View>
-
-            <Text style={styles.label}>PRICE PER DAY (CAD)</Text>
-            <View style={styles.inputWrap}>
-              <TextInput
-                value={pricePerDay}
-                onChangeText={setPricePerDay}
-                placeholder="e.g. 89"
-                placeholderTextColor="rgba(17,24,39,0.35)"
-                style={styles.input}
-                keyboardType="number-pad"
-              />
             </View>
           </View>
 
+          {/* Listing basics */}
           <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather name="map-pin" size={16} color="rgba(17,24,39,0.70)" />
+            <SectionHeader
+              icon="file-text"
+              title="Listing basics"
+              subtitle="Auto title + pricing"
+            />
+
+            <View style={{ marginTop: 12 }}>
+              <Text style={styles.label}>TITLE (AUTO)</Text>
+              <View style={styles.readonlyWrap}>
+                <Text style={styles.readonlyText} numberOfLines={2}>
+                  {titleAuto}
+                </Text>
+                <Text style={styles.readonlyHint}>
+                  Generated from Year + Make + Model
+                </Text>
               </View>
-              <Text style={styles.cardTitle}>Pickup area</Text>
+            </View>
+
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.label}>PRICE PER DAY (CAD)</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  value={pricePerDay}
+                  onChangeText={(v) =>
+                    setPricePerDay(v.replace(/[^\d]/g, "").slice(0, 4))
+                  }
+                  placeholder="e.g. 89"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  style={styles.input}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+          </View>
+
+          {/* Canadian address */}
+          <View style={styles.card}>
+            <SectionHeader
+              icon="map-pin"
+              title="Pickup address (Canada)"
+              subtitle="Used for pickup area & map"
+            />
+
+            <View style={{ marginTop: 12 }}>
+              <Text style={styles.label}>STREET ADDRESS</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  value={address1}
+                  onChangeText={setAddress1}
+                  placeholder="e.g. 123 8 Ave SW"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  style={styles.input}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                />
+              </View>
+            </View>
+
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.label}>UNIT / APT (OPTIONAL)</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  value={address2}
+                  onChangeText={setAddress2}
+                  placeholder="e.g. Unit 1203"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  style={styles.input}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                />
+              </View>
             </View>
 
             <View style={styles.row2}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>COUNTRY</Text>
-                <View style={styles.inputWrap}>
-                  <TextInput
-                    value={countryCode}
-                    onChangeText={setCountryCode}
-                    placeholder="CA"
-                    placeholderTextColor="rgba(17,24,39,0.35)"
-                    style={styles.input}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={2}
-                  />
-                </View>
-              </View>
-
-              <View style={{ width: 12 }} />
-
               <View style={{ flex: 2 }}>
                 <Text style={styles.label}>CITY</Text>
                 <View style={styles.inputWrap}>
@@ -381,24 +727,38 @@ export default function HostOnboardingCarScreen() {
                   />
                 </View>
               </View>
+
+              <View style={{ width: 12 }} />
+
+              <View style={{ flex: 1 }}>
+                <SelectField
+                  label="PROVINCE"
+                  valueText={province}
+                  placeholder="Select"
+                  onPress={() => setProvinceOpen(true)}
+                />
+              </View>
             </View>
 
-            <Text style={styles.label}>AREA / NEIGHBORHOOD</Text>
-            <View style={styles.inputWrap}>
-              <TextInput
-                value={area}
-                onChangeText={setArea}
-                placeholder="e.g. Downtown"
-                placeholderTextColor="rgba(17,24,39,0.35)"
-                style={styles.input}
-                autoCapitalize="words"
-                autoCorrect={false}
-              />
+            <View style={{ marginTop: 14 }}>
+              <Text style={styles.label}>POSTAL CODE</Text>
+              <View style={styles.inputWrap}>
+                <TextInput
+                  value={postalCode}
+                  onChangeText={(v) => setPostalCode(v.toUpperCase())}
+                  onBlur={() => setPostalCode((p) => normalizePostal(p))}
+                  placeholder="e.g. T2P 1B3"
+                  placeholderTextColor="rgba(17,24,39,0.35)"
+                  style={styles.input}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={7}
+                />
+              </View>
+              <Text style={styles.note}>
+                Your listing is Canada-only for now ({countryCode}).
+              </Text>
             </View>
-
-            <Text style={styles.note}>
-              You can fine-tune the exact address later.
-            </Text>
           </View>
 
           <View style={{ height: 12 }} />
@@ -410,7 +770,7 @@ export default function HostOnboardingCarScreen() {
           ) : null}
 
           <Button
-            title={saving ? "Creating..." : "Create Draft Car"}
+            title={saving ? "Creating…" : "Create draft"}
             onPress={handleCreateDraft}
             variant="primary"
             size="lg"
@@ -429,46 +789,51 @@ export default function HostOnboardingCarScreen() {
 
           <View style={{ height: 28 }} />
         </ScrollView>
+
+        {/* YEAR PICKER */}
+        <PickerModal
+          visible={yearOpen}
+          title="Select year"
+          subtitle="Choose the vehicle year"
+          options={yearList}
+          selectedValue={year}
+          onSelect={setYear}
+          onClose={() => setYearOpen(false)}
+          searchable
+        />
+
+        {/* MAKE PICKER */}
+        <PickerModal
+          visible={makeOpen}
+          title="Select make"
+          subtitle="Search brands or type your own (press Done)"
+          options={makeOptions}
+          selectedValue={make}
+          onSelect={setMake}
+          onClose={() => setMakeOpen(false)}
+          searchable
+          allowCustom
+          customPlaceholder="Type any brand (then press Done)"
+        />
+
+        {/* PROVINCE PICKER */}
+        <PickerModal
+          visible={provinceOpen}
+          title="Select province"
+          subtitle="Choose your province / territory"
+          options={provinceOptions}
+          selectedValue={province}
+          onSelect={(v) => setProvince(v as CAProvince)}
+          onClose={() => setProvinceOpen(false)}
+          searchable
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function SegButton({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected?: boolean;
-  onPress?: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={selected ? { selected: true } : {}}
-      style={({ pressed }) => [
-        styles.segBtn,
-        selected ? styles.segBtnOn : styles.segBtnOff,
-        pressed && { opacity: 0.92 },
-      ]}
-    >
-      <Text
-        style={[
-          styles.segText,
-          selected ? styles.segTextOn : styles.segTextOff,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F6F7FB" },
-
   content: {
     paddingHorizontal: 18,
     paddingTop: 14,
@@ -482,7 +847,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     gap: 12,
   },
-
   stepPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -502,7 +866,7 @@ const styles = StyleSheet.create({
 
   progressPill: { alignItems: "flex-end", gap: 6 },
   progressBar: {
-    width: 88,
+    width: 92,
     height: 8,
     borderRadius: 999,
     backgroundColor: "rgba(17,24,39,0.08)",
@@ -520,7 +884,7 @@ const styles = StyleSheet.create({
   },
 
   h1: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "900",
     color: "#111827",
     letterSpacing: -0.2,
@@ -531,11 +895,11 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "rgba(17,24,39,0.45)",
     lineHeight: 18,
-    marginBottom: 14,
+    marginBottom: 12,
   },
 
   card: {
-    borderRadius: 20,
+    borderRadius: 22,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
@@ -543,16 +907,15 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
 
-  cardTitleRow: {
+  sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 10,
+    marginBottom: 8,
   },
-
-  iconChip: {
-    width: 34,
-    height: 34,
+  sectionIcon: {
+    width: 36,
+    height: 36,
     borderRadius: 14,
     backgroundColor: "rgba(17,24,39,0.04)",
     borderWidth: 1,
@@ -560,12 +923,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  cardTitle: {
+  sectionTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.90)",
+    color: "rgba(17,24,39,0.92)",
     letterSpacing: -0.1,
+  },
+  sectionSub: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.45)",
   },
 
   label: {
@@ -574,10 +942,9 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.45)",
     letterSpacing: 0.7,
     marginBottom: 10,
-    marginTop: 12,
   },
 
-  row2: { flexDirection: "row", alignItems: "flex-start" },
+  row2: { flexDirection: "row", alignItems: "flex-start", marginTop: 14 },
 
   inputWrap: {
     borderRadius: 16,
@@ -587,7 +954,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
-
   input: {
     fontSize: 16,
     fontWeight: "900",
@@ -595,37 +961,89 @@ const styles = StyleSheet.create({
     padding: 0,
   },
 
-  note: {
-    marginTop: 12,
+  readonlyWrap: {
+    borderRadius: 16,
+    backgroundColor: "rgba(17,24,39,0.03)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  readonlyText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.80)",
+  },
+  readonlyHint: {
+    marginTop: 6,
     fontSize: 12,
     fontWeight: "800",
     color: "rgba(17,24,39,0.40)",
-    lineHeight: 16,
   },
 
-  segRow: {
+  selectWrap: {
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 10,
-    flexWrap: "wrap",
   },
-  segBtn: {
+  selectText: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#111827",
+    flex: 1,
+  },
+  selectRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  pillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 8,
+  },
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 999,
     borderWidth: 1,
   },
-  segBtnOn: {
+  pillOn: {
     backgroundColor: "rgba(17,24,39,0.10)",
     borderColor: "rgba(17,24,39,0.18)",
   },
-  segBtnOff: {
+  pillOff: {
     backgroundColor: "rgba(17,24,39,0.03)",
     borderColor: "rgba(17,24,39,0.10)",
   },
-  segText: { fontSize: 12, fontWeight: "900" },
-  segTextOn: { color: "rgba(17,24,39,0.88)" },
-  segTextOff: { color: "rgba(17,24,39,0.55)" },
+  pillText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.62)",
+  },
+  pillTextOn: { color: "rgba(17,24,39,0.90)" },
+
+  hr: {
+    marginTop: 16,
+    height: 1,
+    backgroundColor: "rgba(0,0,0,0.06)",
+  },
+
+  note: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.40)",
+    lineHeight: 16,
+  },
 
   backLink: {
     alignSelf: "center",
