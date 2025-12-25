@@ -160,8 +160,7 @@ function uploadWithProgressXHR(args: {
 
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else
-          reject(new Error(`Upload failed: ${xhr.status} ${xhr.responseText}`));
+        else reject(new Error(`Upload failed: ${xhr.status}`));
       };
 
       xhr.onerror = () => reject(new Error("Upload failed: network error"));
@@ -208,6 +207,23 @@ async function finalizePhotos(args: {
   return json.car;
 }
 
+function stageLabel(stage: PhotoStage) {
+  switch (stage) {
+    case "queued":
+      return "Queued";
+    case "requesting_url":
+      return "Preparing";
+    case "uploading":
+      return "Uploading";
+    case "finalizing":
+      return "Finalizing";
+    case "done":
+      return "Done";
+    case "failed":
+      return "Failed";
+  }
+}
+
 export default function HostOnboardingPhotosScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ carId?: string }>();
@@ -216,7 +232,6 @@ export default function HostOnboardingPhotosScreen() {
   const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [busy, setBusy] = useState(false);
 
-  // Per-photo UI state (progress + stage)
   const [photoUi, setPhotoUi] = useState<Record<string, PhotoUiState>>({});
   const [runStats, setRunStats] = useState<{
     current?: string;
@@ -228,24 +243,6 @@ export default function HostOnboardingPhotosScreen() {
 
   const canContinue = photos.length >= 3;
 
-  const ctaLabel = useMemo(() => {
-    if (busy) return "Uploading...";
-    if (photos.length === 0) return "Add photos";
-    if (!canContinue) return `Add ${3 - photos.length} more photo(s)`;
-    return "Upload & Continue";
-  }, [busy, photos.length, canContinue]);
-
-  const hint = useMemo(() => {
-    if (busy) {
-      return `Uploading ${runStats.done}/${runStats.total}…`;
-    }
-    if (photos.length === 0) return "Add at least 3 photos to continue.";
-    if (photos.length < 3)
-      return `Add ${3 - photos.length} more photo(s) to continue.`;
-    if (photos.length < 6) return "Nice! 5–6 photos perform best.";
-    return "Great set. You’re ready to continue.";
-  }, [busy, photos.length, runStats.done, runStats.total]);
-
   const overallProgress = useMemo(() => {
     if (!photos.length) return 0;
     const sum = photos.reduce(
@@ -254,6 +251,23 @@ export default function HostOnboardingPhotosScreen() {
     );
     return clamp01(sum / photos.length);
   }, [photos, photoUi]);
+
+  const primaryLabel = useMemo(() => {
+    if (busy) return "Uploading…";
+    if (photos.length === 0) return "Add photos";
+    if (!canContinue) return `Add ${3 - photos.length} more photo(s)`;
+    return "Upload & Continue";
+  }, [busy, photos.length, canContinue]);
+
+  const helperLine = useMemo(() => {
+    if (busy) {
+      const pct = Math.round(overallProgress * 100);
+      return `Uploading ${runStats.done}/${runStats.total} • ${pct}%`;
+    }
+    if (photos.length === 0) return "Add at least 3 photos to continue.";
+    if (photos.length < 3) return `Add ${3 - photos.length} more photo(s).`;
+    return "Tip: 5–6 photos perform best.";
+  }, [busy, photos.length, runStats.done, runStats.total, overallProgress]);
 
   const setPhotoState = (id: string, patch: Partial<PhotoUiState>) => {
     setPhotoUi((prev) => ({
@@ -306,18 +320,14 @@ export default function HostOnboardingPhotosScreen() {
     setPhotos((prev) => {
       const seen = new Set(prev.map((p) => p.uri));
       const merged = [...prev];
-      for (const p of next) {
-        if (!seen.has(p.uri)) merged.push(p);
-      }
+      for (const p of next) if (!seen.has(p.uri)) merged.push(p);
       return merged.slice(0, 12);
     });
 
-    // init UI state
     setPhotoUi((prev) => {
       const out = { ...prev };
-      for (const p of next) {
+      for (const p of next)
         out[p.id] = out[p.id] ?? { progress: 0, stage: "queued" };
-      }
       return out;
     });
   };
@@ -332,7 +342,7 @@ export default function HostOnboardingPhotosScreen() {
     });
   };
 
-  const uploadAllAndContinue = async () => {
+  const onPrimaryPress = async () => {
     if (!carId) {
       Alert.alert(
         "Missing car id",
@@ -341,8 +351,10 @@ export default function HostOnboardingPhotosScreen() {
       return;
     }
 
+    if (busy) return;
+
+    // single CTA behavior:
     if (!canContinue) {
-      // single CTA behavior: if not enough photos, just open picker
       await pickPhotos();
       return;
     }
@@ -366,65 +378,50 @@ export default function HostOnboardingPhotosScreen() {
         height?: number;
       }> = [];
 
-      // Upload sequentially (less memory, clearer progress)
       for (let i = 0; i < photos.length; i++) {
         if (cancelRef.current) throw new Error("Upload cancelled");
 
         const raw = photos[i];
         setRunStats({ current: raw.id, done: i, total: photos.length });
 
-        try {
-          setPhotoState(raw.id, { stage: "requesting_url", progress: 0.02 });
+        setPhotoState(raw.id, { stage: "requesting_url", progress: 0.02 });
 
-          const p = await ensurePngPhoto(raw);
-          const mimeType = "image/png";
+        const p = await ensurePngPhoto(raw);
+        const mimeType = "image/png";
 
-          const { uploadUrl, photo } = await requestUploadUrl({
-            carId,
-            mimeType,
-            fileName: p.fileName ?? null,
-          });
+        const { uploadUrl, photo } = await requestUploadUrl({
+          carId,
+          mimeType,
+          fileName: p.fileName ?? null,
+        });
 
-          setPhotoState(raw.id, { stage: "uploading", progress: 0.08 });
+        setPhotoState(raw.id, { stage: "uploading", progress: 0.08 });
 
-          await uploadWithProgressXHR({
-            uploadUrl,
-            uri: p.uri,
-            contentType: mimeType,
-            onProgress: (frac) => {
-              // map 0..1 -> 0.10..0.92 for UI
-              setPhotoState(raw.id, {
-                progress: 0.1 + 0.82 * clamp01(frac),
-              });
-            },
-          });
+        await uploadWithProgressXHR({
+          uploadUrl,
+          uri: p.uri,
+          contentType: mimeType,
+          onProgress: (frac) => {
+            // map 0..1 -> 0.10..0.92
+            setPhotoState(raw.id, { progress: 0.1 + 0.82 * clamp01(frac) });
+          },
+        });
 
-          // Add to finalize list (we finalize once at the end)
-          setPhotoState(raw.id, { stage: "finalizing", progress: 0.95 });
+        setPhotoState(raw.id, { stage: "finalizing", progress: 0.95 });
 
-          toFinalize.push({
-            id: photo.id,
-            path: photo.path,
-            url: photo.url,
-            mime: photo.mime || mimeType,
-            width: raw.width,
-            height: raw.height,
-          });
+        toFinalize.push({
+          id: photo.id,
+          path: photo.path,
+          url: photo.url,
+          mime: photo.mime || mimeType,
+          width: raw.width,
+          height: raw.height,
+        });
 
-          setPhotoState(raw.id, { stage: "done", progress: 1 });
-        } catch (e: any) {
-          setPhotoState(raw.id, {
-            stage: "failed",
-            progress: photoUi[raw.id]?.progress ?? 0,
-            error: e?.message || "Upload failed",
-          });
-          throw e; // stop the whole flow (keeps failure visible)
-        } finally {
-          setRunStats({ current: raw.id, done: i + 1, total: photos.length });
-        }
+        setPhotoState(raw.id, { stage: "done", progress: 1 });
+        setRunStats({ current: raw.id, done: i + 1, total: photos.length });
       }
 
-      // Finalize once: updates DB image_gallery, has_image, image_path cover
       await finalizePhotos({ carId, photos: toFinalize });
 
       Alert.alert("Done", "Photos uploaded. Your draft car is updated.");
@@ -434,33 +431,34 @@ export default function HostOnboardingPhotosScreen() {
       });
     } catch (e: any) {
       console.warn("upload photos failed:", e?.message || e);
-      Alert.alert(
-        "Error",
-        e?.message || "Failed to upload photos. Please try again."
-      );
+
+      // mark current as failed if we know it
+      if (runStats.current) {
+        setPhotoState(runStats.current, {
+          stage: "failed",
+          error: e?.message || "Upload failed",
+        });
+      }
+
+      Alert.alert("Error", e?.message || "Failed to upload photos.");
     } finally {
       setBusy(false);
       setRunStats({ done: 0, total: 0 });
     }
   };
 
-  const topRightActionLabel = useMemo(() => {
-    if (busy) return "Stop";
-    if (photos.length === 0) return "";
-    return "Add";
-  }, [busy, photos.length]);
-
-  const onTopRightAction = async () => {
-    if (busy) {
-      cancelRef.current = true;
-      Alert.alert(
-        "Stopping",
-        "We will stop after the current upload finishes."
-      );
-      return;
-    }
-    await pickPhotos();
+  const onStop = () => {
+    if (!busy) return;
+    cancelRef.current = true;
+    Alert.alert("Stopping", "We will stop after the current upload finishes.");
   };
+
+  // More intuitive layout:
+  // - Big top progress card during upload
+  // - Grid stays, but spinner is moved into an overlay bar (not cramped)
+  // - "Add" action is REMOVED while busy (your request)
+  // - Optional Stop button only while busy
+  const showTopActionAdd = !busy && photos.length > 0 && photos.length < 12;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -473,70 +471,108 @@ export default function HostOnboardingPhotosScreen() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {/* Header */}
+          {/* Top header */}
           <View style={styles.topHeader}>
-            <View style={styles.stepPill}>
-              <Feather name="image" size={14} color="rgba(17,24,39,0.75)" />
-              <Text style={styles.stepPillText}>Add photos</Text>
+            <Pressable
+              onPress={() => router.back()}
+              disabled={busy}
+              style={({ pressed }) => [
+                styles.iconBtn,
+                busy && { opacity: 0.4 },
+                pressed && { opacity: 0.85 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <Feather name="arrow-left" size={18} color="#111827" />
+            </Pressable>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.screenTitle}>Car photos</Text>
+              <Text style={styles.screenSub}>
+                {busy ? "Uploading in progress…" : "Add at least 3 photos"}
+              </Text>
             </View>
 
-            {!!topRightActionLabel && (
+            {showTopActionAdd ? (
               <Pressable
-                onPress={onTopRightAction}
+                onPress={pickPhotos}
                 style={({ pressed }) => [
                   styles.topRightBtn,
                   pressed && { opacity: 0.85 },
                 ]}
                 accessibilityRole="button"
               >
-                <Feather
-                  name={busy ? "x" : "plus"}
-                  size={16}
-                  color="rgba(17,24,39,0.85)"
-                />
-                <Text style={styles.topRightBtnText}>
-                  {topRightActionLabel}
-                </Text>
+                <Feather name="plus" size={16} color="rgba(17,24,39,0.85)" />
+                <Text style={styles.topRightBtnText}>Add</Text>
               </Pressable>
+            ) : busy ? (
+              <Pressable
+                onPress={onStop}
+                style={({ pressed }) => [
+                  styles.stopBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                accessibilityRole="button"
+              >
+                <Feather name="x" size={16} color="#991B1B" />
+                <Text style={styles.stopBtnText}>Stop</Text>
+              </Pressable>
+            ) : (
+              <View style={{ width: 72 }} />
             )}
           </View>
 
-          <Text style={styles.h1}>Upload car photos</Text>
-          <Text style={styles.h2}>
-            Clear photos build trust and increase bookings.
-          </Text>
-
-          {/* Guidance card */}
-          <View style={styles.card}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.iconChip}>
-                <Feather name="camera" size={16} color="rgba(17,24,39,0.70)" />
+          {/* Hero / progress card */}
+          <View style={styles.heroCard}>
+            <View style={styles.heroRow}>
+              <View style={styles.heroIcon}>
+                <Feather name="camera" size={18} color="rgba(17,24,39,0.70)" />
               </View>
-              <Text style={styles.cardTitle}>Photos</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.heroTitle}>
+                  {busy ? "Uploading photos" : "Add photos to your listing"}
+                </Text>
+                <Text style={styles.heroHint}>{helperLine}</Text>
+              </View>
             </View>
 
-            <Text style={styles.note}>{hint}</Text>
-
-            {/* Overall progress */}
-            {busy ? (
-              <View style={{ marginTop: 12 }}>
-                <View style={styles.overallBar}>
-                  <View
-                    style={[
-                      styles.overallFill,
-                      { width: `${Math.round(overallProgress * 100)}%` },
-                    ]}
-                  />
-                </View>
-                <Text style={styles.overallText}>
-                  Overall: {Math.round(overallProgress * 100)}%
-                </Text>
+            <View style={{ marginTop: 12 }}>
+              <View style={styles.overallBar}>
+                <View
+                  style={[
+                    styles.overallFill,
+                    { width: `${Math.round(overallProgress * 100)}%` },
+                  ]}
+                />
               </View>
-            ) : (
-              <Text style={styles.tip}>
-                Tip: include front, back, side, interior, and odometer.
-              </Text>
-            )}
+
+              <View style={styles.overallMetaRow}>
+                <Text style={styles.overallText}>
+                  {busy
+                    ? `Overall ${Math.round(overallProgress * 100)}%`
+                    : `${photos.length}/12 selected`}
+                </Text>
+
+                {!busy ? (
+                  <View style={styles.requirementsPill}>
+                    <Feather
+                      name={canContinue ? "check" : "alert-circle"}
+                      size={14}
+                      color={canContinue ? "#111827" : "rgba(17,24,39,0.55)"}
+                    />
+                    <Text style={styles.requirementsText}>
+                      {canContinue ? "Ready" : "Need 3+"}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.requirementsPill}>
+                    <ActivityIndicator />
+                    <Text style={styles.requirementsText}>Working</Text>
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
 
           {/* Grid */}
@@ -546,7 +582,7 @@ export default function HostOnboardingPhotosScreen() {
                 <Feather name="image" size={20} color="rgba(17,24,39,0.35)" />
                 <Text style={styles.emptyTitle}>No photos yet</Text>
                 <Text style={styles.emptySub}>
-                  Tap the button below to choose images from your phone.
+                  Tap below to choose images from your phone.
                 </Text>
               </View>
             ) : (
@@ -556,11 +592,18 @@ export default function HostOnboardingPhotosScreen() {
                   const stage = ui?.stage ?? "queued";
                   const prog = clamp01(ui?.progress ?? 0);
 
+                  const showOverlay = busy || stage === "failed";
+                  const overlayTone =
+                    stage === "done"
+                      ? "rgba(255,255,255,0.92)"
+                      : stage === "failed"
+                      ? "rgba(255,245,245,0.96)"
+                      : "rgba(255,255,255,0.92)";
+
                   return (
                     <View key={p.id} style={styles.thumbWrap}>
                       <Image source={{ uri: p.uri }} style={styles.thumb} />
 
-                      {/* Remove */}
                       {!busy && (
                         <Pressable
                           onPress={() => removePhoto(p.id)}
@@ -575,34 +618,24 @@ export default function HostOnboardingPhotosScreen() {
                         </Pressable>
                       )}
 
-                      {/* Progress overlay */}
-                      {busy && (
-                        <View style={styles.thumbOverlay}>
-                          <View style={styles.thumbBar}>
-                            <View
-                              style={[
-                                styles.thumbFill,
-                                { width: `${Math.round(prog * 100)}%` },
-                              ]}
-                            />
-                          </View>
+                      {showOverlay && (
+                        <View
+                          style={[
+                            styles.thumbOverlay,
+                            { backgroundColor: overlayTone },
+                          ]}
+                        >
+                          {/* Bigger status row (spinner no longer cramped) */}
+                          <View style={styles.thumbTopRow}>
+                            <View style={styles.badge}>
+                              <Text style={styles.badgeText}>
+                                {stageLabel(stage)}
+                              </Text>
+                            </View>
 
-                          <View style={styles.thumbMetaRow}>
-                            <Text style={styles.thumbMetaText}>
-                              {stage === "requesting_url"
-                                ? "Preparing…"
-                                : stage === "uploading"
-                                ? `Uploading ${Math.round(prog * 100)}%`
-                                : stage === "finalizing"
-                                ? "Finalizing…"
-                                : stage === "done"
-                                ? "Done"
-                                : stage === "failed"
-                                ? "Failed"
-                                : "Queued"}
-                            </Text>
-
-                            {stage === "uploading" ? (
+                            {stage === "uploading" ||
+                            stage === "requesting_url" ||
+                            stage === "finalizing" ? (
                               <ActivityIndicator />
                             ) : stage === "done" ? (
                               <Feather name="check" size={16} color="#111827" />
@@ -615,11 +648,42 @@ export default function HostOnboardingPhotosScreen() {
                             ) : null}
                           </View>
 
-                          {stage === "failed" && ui?.error ? (
-                            <Text style={styles.thumbError} numberOfLines={2}>
-                              {ui.error}
+                          {/* Progress bar */}
+                          <View style={styles.thumbBar}>
+                            <View
+                              style={[
+                                styles.thumbFill,
+                                { width: `${Math.round(prog * 100)}%` },
+                              ]}
+                            />
+                          </View>
+
+                          <View style={styles.thumbBottomRow}>
+                            <Text style={styles.thumbMetaText}>
+                              {stage === "uploading"
+                                ? `${Math.round(prog * 100)}%`
+                                : stage === "done"
+                                ? "100%"
+                                : stage === "failed"
+                                ? "—"
+                                : ""}
                             </Text>
-                          ) : null}
+
+                            {stage === "failed" && !!ui?.error ? (
+                              <Text style={styles.thumbError} numberOfLines={1}>
+                                {ui.error}
+                              </Text>
+                            ) : (
+                              <Text
+                                style={styles.thumbMetaSub}
+                                numberOfLines={1}
+                              >
+                                {stage === "queued" && !busy
+                                  ? "Ready to upload"
+                                  : ""}
+                              </Text>
+                            )}
+                          </View>
                         </View>
                       )}
                     </View>
@@ -631,27 +695,15 @@ export default function HostOnboardingPhotosScreen() {
 
           <View style={{ height: 12 }} />
 
-          {/* Single CTA (combined) */}
+          {/* Primary CTA (single button) */}
           <Button
-            title={ctaLabel}
-            onPress={uploadAllAndContinue}
+            title={primaryLabel}
+            onPress={onPrimaryPress}
             variant="primary"
             size="lg"
             disabled={busy}
             isLoading={busy}
           />
-
-          <Pressable
-            onPress={() => router.back()}
-            disabled={busy}
-            style={({ pressed }) => [
-              styles.backLink,
-              busy && { opacity: 0.5 },
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Text style={styles.backLinkText}>Back</Text>
-          </Pressable>
 
           <View style={{ height: 28 }} />
         </ScrollView>
@@ -668,25 +720,32 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
     gap: 12,
+    marginBottom: 12,
   },
 
-  stepPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+  iconBtn: {
+    width: 42,
+    height: 42,
     borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.04)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(17,24,39,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
+    borderColor: "rgba(17,24,39,0.10)",
   },
-  stepPillText: {
-    fontSize: 12,
+
+  screenTitle: {
+    fontSize: 16,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.75)",
+    color: "#111827",
+    letterSpacing: -0.1,
+  },
+  screenSub: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.50)",
   },
 
   topRightBtn: {
@@ -706,40 +765,32 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.85)",
   },
 
-  h1: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: "#111827",
-    letterSpacing: -0.2,
-    marginBottom: 6,
+  stopBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.20)",
   },
-  h2: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.45)",
-    lineHeight: 18,
-    marginBottom: 14,
-  },
+  stopBtnText: { fontSize: 12, fontWeight: "900", color: "#991B1B" },
 
-  card: {
+  heroCard: {
     borderRadius: 20,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
     padding: 14,
-    marginTop: 2,
   },
 
-  cardTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 6,
-  },
+  heroRow: { flexDirection: "row", alignItems: "center", gap: 10 },
 
-  iconChip: {
-    width: 34,
-    height: 34,
+  heroIcon: {
+    width: 36,
+    height: 36,
     borderRadius: 14,
     backgroundColor: "rgba(17,24,39,0.04)",
     borderWidth: 1,
@@ -748,26 +799,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  cardTitle: {
+  heroTitle: {
     fontSize: 15,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.90)",
+    color: "rgba(17,24,39,0.92)",
     letterSpacing: -0.1,
   },
 
-  note: {
-    marginTop: 8,
+  heroHint: {
+    marginTop: 4,
     fontSize: 12,
     fontWeight: "800",
-    color: "rgba(17,24,39,0.45)",
-    lineHeight: 16,
-  },
-  tip: {
-    marginTop: 10,
-    fontSize: 12,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.40)",
-    lineHeight: 16,
+    color: "rgba(17,24,39,0.50)",
   },
 
   overallBar: {
@@ -782,11 +825,37 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: "rgba(17,24,39,0.55)",
   },
+
+  overallMetaRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+
   overallText: {
-    marginTop: 8,
     fontSize: 12,
     fontWeight: "900",
     color: "rgba(17,24,39,0.55)",
+  },
+
+  requirementsPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+  },
+
+  requirementsText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
   },
 
   gridWrap: {
@@ -847,18 +916,40 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
+  // Bigger overlay so spinner is never cramped/covered
   thumbOverlay: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
     padding: 8,
-    backgroundColor: "rgba(255,255,255,0.92)",
     borderTopWidth: 1,
     borderTopColor: "rgba(0,0,0,0.06)",
   },
 
+  thumbTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.75)",
+  },
+
   thumbBar: {
+    marginTop: 8,
     width: "100%",
     height: 8,
     borderRadius: 999,
@@ -871,35 +962,33 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17,24,39,0.55)",
   },
 
-  thumbMetaRow: {
-    marginTop: 6,
+  thumbBottomRow: {
+    marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
   },
+
   thumbMetaText: {
     fontSize: 11,
     fontWeight: "900",
     color: "rgba(17,24,39,0.70)",
   },
+
+  thumbMetaSub: {
+    flex: 1,
+    textAlign: "right",
+    fontSize: 10,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.45)",
+  },
+
   thumbError: {
-    marginTop: 6,
+    flex: 1,
+    textAlign: "right",
     fontSize: 10,
     fontWeight: "800",
     color: "#991B1B",
-  },
-
-  backLink: {
-    alignSelf: "center",
-    marginTop: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-  },
-  backLinkText: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.55)",
   },
 });
