@@ -1,11 +1,15 @@
 import React, { useMemo } from "react";
 import { Text, View, StyleSheet } from "react-native";
 import { useAppSelector } from "@/redux/hooks";
-import type { HostProfile } from "@/types/host";
+import { selectHost } from "@/redux/slices/hostSlice";
 
-function shouldShowHostOnboardingSteps(host: HostProfile | null | undefined) {
-  if (!host) return true; // first time / not loaded yet
-  return host.status !== "approved"; // still onboarding / not active
+type HostProfileLike = {
+  status?: string | null;
+} | null;
+
+function shouldShowHostOnboardingSteps(host: HostProfileLike) {
+  if (!host) return true; // host profile not loaded / first time
+  return host.status !== "approved"; // hide if approved
 }
 
 export default function HostStepIndicator({
@@ -15,7 +19,7 @@ export default function HostStepIndicator({
   current: number;
   total: number;
 }) {
-  const host = useAppSelector((s: any) => s.host?.me ?? null); // adjust if your slice differs
+  const host = useAppSelector(selectHost) as HostProfileLike;
 
   const show = useMemo(() => shouldShowHostOnboardingSteps(host), [host]);
   if (!show) return null;
