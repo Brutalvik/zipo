@@ -20,157 +20,32 @@ import Button from "@/components/Button/Button";
 import { useAppSelector } from "@/redux/hooks";
 import { selectHost } from "@/redux/slices/hostSlice";
 import { createHostCarDraft } from "@/services/hostApi";
-import PickerModal from "@/components/common/PickerModal";
 
-type Transmission = "automatic" | "manual";
-type VehicleType = "sedan" | "suv" | "truck" | "van";
+// ✅ Reuse NEW components you created
+import HostStepIndicator from "@/components/host/HostStepIndicator";
+import SearchPickerModal from "@/components/host/SearchPickerModal";
+import {
+  ALL_BRANDS,
+  CA_PROVINCES,
+  CAProvince,
+  POPULAR_BRANDS,
+  SelectOption,
+  Transmission,
+  TRANSMISSIONS,
+  VEHICLE_TYPE_ITEMS,
+  VehicleType,
+} from "@/components/host/dataTypes";
 
-type SelectOption = { label: string; value: string };
+// ✅ Optional: if you already added geocodeAddress in your codebase, use it.
+// If you haven’t created it yet, either create it or remove this import + usage.
+import { geocodeAddress } from "@/lib/geoCode";
+import { auth } from "@/services/firebase";
 
-const VEHICLE_TYPES: Array<{ key: VehicleType; label: string; icon: any }> = [
-  { key: "sedan", label: "Sedan", icon: "navigation" },
-  { key: "suv", label: "SUV", icon: "truck" },
-  { key: "truck", label: "Truck", icon: "package" },
-  { key: "van", label: "Van", icon: "box" },
-];
-
-const TRANSMISSIONS: Array<{ key: Transmission; label: string }> = [
-  { key: "automatic", label: "Automatic" },
-  { key: "manual", label: "Manual" },
-];
-
-// Curated + searchable list. Supports any brand via custom input.
-const POPULAR_BRANDS = [
-  "Toyota",
-  "Honda",
-  "Ford",
-  "Chevrolet",
-  "Nissan",
-  "Hyundai",
-  "Kia",
-  "Volkswagen",
-  "BMW",
-  "Mercedes-Benz",
-  "Audi",
-  "Tesla",
-  "Lexus",
-  "Mazda",
-  "Subaru",
-  "Jeep",
-  "Ram",
-  "GMC",
-  "Volvo",
-  "Porsche",
-];
-
-const ALL_BRANDS = [
-  "Abarth",
-  "Acura",
-  "Aiways",
-  "Alfa Romeo",
-  "Alpine",
-  "Aston Martin",
-  "Audi",
-  "BAIC",
-  "Bentley",
-  "BMW",
-  "Bugatti",
-  "Buick",
-  "BYD",
-  "Cadillac",
-  "Changan",
-  "Chery",
-  "Chevrolet",
-  "Chrysler",
-  "Citroën",
-  "Cupra",
-  "Dacia",
-  "Daewoo",
-  "Daihatsu",
-  "Datsun",
-  "Dodge",
-  "DS Automobiles",
-  "Ferrari",
-  "Fiat",
-  "Ford",
-  "GAC",
-  "Genesis",
-  "Geely",
-  "GMC",
-  "Great Wall",
-  "Haval",
-  "Holden",
-  "Honda",
-  "Hummer",
-  "Hyundai",
-  "Infiniti",
-  "Isuzu",
-  "Jaguar",
-  "Jeep",
-  "Kia",
-  "Koenigsegg",
-  "Lada",
-  "Lamborghini",
-  "Land Rover",
-  "Lexus",
-  "Lincoln",
-  "Lotus",
-  "Lucid",
-  "Mahindra",
-  "Maserati",
-  "Maybach",
-  "Mazda",
-  "McLaren",
-  "Mercedes-Benz",
-  "MG",
-  "Mini",
-  "Mitsubishi",
-  "Nio",
-  "Nissan",
-  "Opel",
-  "Pagani",
-  "Peugeot",
-  "Polestar",
-  "Porsche",
-  "Proton",
-  "Ram",
-  "Renault",
-  "Rivian",
-  "Rolls-Royce",
-  "Saab",
-  "Seat",
-  "Skoda",
-  "Smart",
-  "SsangYong",
-  "Subaru",
-  "Suzuki",
-  "Tata",
-  "Tesla",
-  "Toyota",
-  "Vauxhall",
-  "VinFast",
-  "Volkswagen",
-  "Volvo",
-  "Wuling",
-];
-
-const CA_PROVINCES = [
-  "AB",
-  "BC",
-  "MB",
-  "NB",
-  "NL",
-  "NS",
-  "NT",
-  "NU",
-  "ON",
-  "PE",
-  "QC",
-  "SK",
-  "YT",
-] as const;
-
-type CAProvince = (typeof CA_PROVINCES)[number];
+async function getIdToken() {
+  const token = await auth.currentUser?.getIdToken(true);
+  if (!token) throw new Error("Missing auth token");
+  return token;
+}
 
 function yearsOptions(): SelectOption[] {
   const now = new Date().getFullYear();
@@ -329,11 +204,13 @@ export default function HostOnboardingCarScreen() {
   const [make, setMake] = useState("");
   const [model, setModel] = useState("");
 
-  const [vehicleType, setVehicleType] = useState<VehicleType>("sedan");
+  const [vehicleType, setVehicleType] = useState<VehicleType>(
+    VEHICLE_TYPE_ITEMS?.[0]?.value ?? "sedan"
+  );
   const [transmission, setTransmission] = useState<Transmission>("automatic");
   const [seats, setSeats] = useState("5");
 
-  // Title (auto, read-only)
+  // Title (auto)
   const titleAuto = useMemo(
     () => autoTitleFrom(year, make, model),
     [year, make, model]
@@ -344,8 +221,8 @@ export default function HostOnboardingCarScreen() {
 
   // Address (Canada)
   const countryCode = "CA";
-  const [address1, setAddress1] = useState(""); // street address
-  const [address2, setAddress2] = useState(""); // unit / apt (optional)
+  const [address1, setAddress1] = useState("");
+  const [address2, setAddress2] = useState("");
   const [city, setCity] = useState(defaultCity);
   const [province, setProvince] = useState<CAProvince>(
     (CA_PROVINCES.includes(defaultProvince as any)
@@ -354,30 +231,28 @@ export default function HostOnboardingCarScreen() {
   );
   const [postalCode, setPostalCode] = useState("");
 
-  // Pickers
+  // Modals (replacing PickerModal)
   const [yearOpen, setYearOpen] = useState(false);
   const [makeOpen, setMakeOpen] = useState(false);
+  const [typeOpen, setTypeOpen] = useState(false);
   const [provinceOpen, setProvinceOpen] = useState(false);
 
-  const yearList = useMemo(() => yearsOptions(), []);
+  const yearItems = useMemo(() => yearsOptions(), []);
 
-  const makeOptions = useMemo(() => {
+  const makeItems = useMemo(() => {
     const popular = POPULAR_BRANDS.map((b) => ({ label: b, value: b }));
     const all = Array.from(new Set(ALL_BRANDS))
       .sort((a, b) => a.localeCompare(b))
       .map((b) => ({ label: b, value: b }));
 
+    // de-dupe while keeping labels
     const map = new Map<string, SelectOption>();
     for (const o of [...popular, ...all]) map.set(o.value, o);
     return Array.from(map.values());
   }, []);
 
-  const provinceOptions = useMemo<SelectOption[]>(
-    () =>
-      CA_PROVINCES.map((p) => ({
-        value: p,
-        label: p,
-      })),
+  const provinceItems = useMemo<SelectOption[]>(
+    () => CA_PROVINCES.map((p) => ({ label: p, value: p })),
     []
   );
 
@@ -386,7 +261,6 @@ export default function HostOnboardingCarScreen() {
   const parsedPrice = useMemo(() => Number(pricePerDay), [pricePerDay]);
 
   const isValid = useMemo(() => {
-    // Vehicle
     const yOk =
       Number.isFinite(parsedYear) &&
       parsedYear >= 1990 &&
@@ -401,7 +275,6 @@ export default function HostOnboardingCarScreen() {
     const priceOk =
       Number.isFinite(parsedPrice) && parsedPrice >= 10 && parsedPrice <= 1000;
 
-    // Address (Canada)
     const address1Ok = address1.trim().length >= 5;
     const cityOk = city.trim().length >= 2;
     const provinceOk = CA_PROVINCES.includes(province);
@@ -450,14 +323,21 @@ export default function HostOnboardingCarScreen() {
         postal: postalCode,
       });
 
-      /**
-       * Backend compatibility:
-       * - Your API currently expects city + area + full_address.
-       * - We map `area` to the province for now (AB/BC/etc.)
-       * - Store the full Canadian address in `full_address`.
-       * - Also store structured address in features.address for future.
-       */
-      const payload = {
+      // ✅ geocode pickup coords (if your /api/geocode exists)
+      let pickup_lat: number | null = null;
+      let pickup_lng: number | null = null;
+
+      try {
+        const token = await getIdToken();
+        const geo = await geocodeAddress({ address: fullAddress, token });
+        pickup_lat = geo.lat;
+        pickup_lng = geo.lng;
+      } catch (e: any) {
+        // Don’t block draft creation if geocode fails; just log it
+        console.warn("geocode failed:", e?.message || e);
+      }
+
+      const payload: any = {
         title: titleAuto.trim(),
 
         vehicle_type: vehicleType,
@@ -467,8 +347,12 @@ export default function HostOnboardingCarScreen() {
 
         country_code: countryCode,
         city: city.trim(),
-        area: province, // ✅ temporary mapping for existing backend schema
+        area: province, // keep your existing mapping
         full_address: fullAddress,
+
+        pickup_address: fullAddress,
+        pickup_lat,
+        pickup_lng,
 
         image_path: "draft/placeholder.jpg",
         has_image: false,
@@ -488,6 +372,11 @@ export default function HostOnboardingCarScreen() {
             province,
             postal_code: normalizePostal(postalCode),
             full_address: fullAddress,
+          },
+          pickup: {
+            pickup_address: fullAddress,
+            pickup_lat,
+            pickup_lng,
           },
         },
       };
@@ -521,6 +410,11 @@ export default function HostOnboardingCarScreen() {
     router,
   ]);
 
+  const vehicleTypeLabel = useMemo(() => {
+    const hit = VEHICLE_TYPE_ITEMS.find((x) => x.value === vehicleType);
+    return hit?.label ?? vehicleType;
+  }, [vehicleType]);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
@@ -541,12 +435,8 @@ export default function HostOnboardingCarScreen() {
               <Text style={styles.stepPillText}>Add car</Text>
             </View>
 
-            <View style={styles.progressPill}>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: "67%" }]} />
-              </View>
-              <Text style={styles.progressText}>2 of 3</Text>
-            </View>
+            {/* ✅ only shows if host is still onboarding */}
+            <HostStepIndicator current={2} total={3} />
           </View>
 
           <Text style={styles.h1}>Car information</Text>
@@ -593,18 +483,13 @@ export default function HostOnboardingCarScreen() {
 
             <View style={styles.hr} />
 
-            <Text style={[styles.label, { marginTop: 2 }]}>VEHICLE TYPE</Text>
-            <View style={styles.pillRow}>
-              {VEHICLE_TYPES.map((t) => (
-                <SegPill
-                  key={t.key}
-                  label={t.label}
-                  icon={t.icon}
-                  selected={vehicleType === t.key}
-                  onPress={() => setVehicleType(t.key)}
-                />
-              ))}
-            </View>
+            {/* ✅ Vehicle type now uses SearchPickerModal + expanded types */}
+            <SelectField
+              label="VEHICLE TYPE"
+              valueText={vehicleTypeLabel}
+              placeholder="Select type"
+              onPress={() => setTypeOpen(true)}
+            />
 
             <Text style={[styles.label, { marginTop: 14 }]}>TRANSMISSION</Text>
             <View style={styles.pillRow}>
@@ -790,42 +675,57 @@ export default function HostOnboardingCarScreen() {
           <View style={{ height: 28 }} />
         </ScrollView>
 
-        {/* YEAR PICKER */}
-        <PickerModal
+        {/* ✅ Search modals (keyboard-safe, fixed filtering) */}
+        <SearchPickerModal
           visible={yearOpen}
           title="Select year"
-          subtitle="Choose the vehicle year"
-          options={yearList}
-          selectedValue={year}
-          onSelect={setYear}
+          items={yearItems}
+          value={year}
+          placeholder="Type year (e.g. 2012)"
           onClose={() => setYearOpen(false)}
-          searchable
+          onSelect={(it: any) => {
+            setYear(it.value);
+            setYearOpen(false);
+          }}
         />
 
-        {/* MAKE PICKER */}
-        <PickerModal
+        <SearchPickerModal
           visible={makeOpen}
           title="Select make"
-          subtitle="Search brands or type your own (press Done)"
-          options={makeOptions}
-          selectedValue={make}
-          onSelect={setMake}
+          items={makeItems}
+          value={make}
+          placeholder="Type brand (e.g. BMW)"
           onClose={() => setMakeOpen(false)}
-          searchable
-          allowCustom
-          customPlaceholder="Type any brand (then press Done)"
+          onSelect={(it: any) => {
+            setMake(it.value);
+            setMakeOpen(false);
+          }}
         />
 
-        {/* PROVINCE PICKER */}
-        <PickerModal
+        <SearchPickerModal
+          visible={typeOpen}
+          title="Select vehicle type"
+          items={VEHICLE_TYPE_ITEMS}
+          value={vehicleType}
+          placeholder="Search type"
+          onClose={() => setTypeOpen(false)}
+          onSelect={(it: any) => {
+            setVehicleType(it.value);
+            setTypeOpen(false);
+          }}
+        />
+
+        <SearchPickerModal
           visible={provinceOpen}
           title="Select province"
-          subtitle="Choose your province / territory"
-          options={provinceOptions}
-          selectedValue={province}
-          onSelect={(v) => setProvince(v as CAProvince)}
+          items={provinceItems}
+          value={province}
+          placeholder="Search province (e.g. AB)"
           onClose={() => setProvinceOpen(false)}
-          searchable
+          onSelect={(it: any) => {
+            setProvince(it.value as CAProvince);
+            setProvinceOpen(false);
+          }}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -862,25 +762,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
     color: "rgba(17,24,39,0.75)",
-  },
-
-  progressPill: { alignItems: "flex-end", gap: 6 },
-  progressBar: {
-    width: 92,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.08)",
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.55)",
-  },
-  progressText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.40)",
   },
 
   h1: {
