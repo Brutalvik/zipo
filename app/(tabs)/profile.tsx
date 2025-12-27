@@ -468,7 +468,15 @@ export default function ProfileScreen() {
                   </View>
                 </View>
 
-                <Text style={styles.statusLine} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.statusLine,
+                    anyVerified
+                      ? styles.statusLineVerified
+                      : styles.statusLineUnverified,
+                  ]}
+                  numberOfLines={1}
+                >
                   {statusLine}
                 </Text>
               </View>
@@ -764,15 +772,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   modePillGuest: {
-    backgroundColor: "rgba(17,24,39,0.04)",
-    borderColor: "rgba(17,24,39,0.10)",
+    backgroundColor: "rgba(16,185,129,0.10)",
+    borderColor: "rgba(16,185,129,0.18)",
   },
   modePillHost: {
     backgroundColor: "rgba(37,99,235,0.08)",
     borderColor: "rgba(37,99,235,0.18)",
   },
   modePillText: { fontSize: 12, fontWeight: "900" },
-  modeTextGuest: { color: "rgba(17,24,39,0.78)" },
+  modeTextGuest: { color: "rgba(16,185,129,0.95)" },
   modeTextHost: { color: "rgba(37,99,235,0.95)" },
 
   verifiedPill: {
@@ -797,6 +805,8 @@ const styles = StyleSheet.create({
   pillTextNo: { color: "rgba(245,158,11,0.95)" },
 
   statusLine: { fontSize: 12, fontWeight: "700", color: "rgba(17,24,39,0.42)" },
+  statusLineVerified: { color: "rgba(16,185,129,0.85)" },
+  statusLineUnverified: { color: "rgba(245,158,11,0.85)" },
 
   verifyBlock: { marginTop: 14, alignItems: "center" },
   verifyRow: {

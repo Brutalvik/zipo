@@ -134,12 +134,8 @@ export default function VerifyEmailScreen() {
     try {
       // CRITICAL: Reload user to fetch latest state from Firebase
       const refresehedUser = await user.reload();
-      console.log("Refreshed User : ", refresehedUser);
       // Get fresh reference after reload
       const refreshed = auth.currentUser;
-
-      console.log("----REFERESHED---- : ", refreshed);
-
       if (!refreshed) {
         throw new Error("Could not refresh user state");
       }
@@ -147,16 +143,6 @@ export default function VerifyEmailScreen() {
       const currentEmail = normalizeEmail(refreshed.email);
       const isVerified = !!refreshed.emailVerified;
 
-      console.log("Verification check:", {
-        targetEmail,
-        currentEmail,
-        isVerified,
-        emailMatch: currentEmail === targetEmail,
-      });
-
-      // When using verifyBeforeUpdateEmail:
-      // 1. User clicks link -> Firebase updates email AND sets emailVerified=true
-      // 2. We need to check BOTH conditions
       const emailMatches = targetEmail ? currentEmail === targetEmail : true;
 
       if (isVerified && emailMatches) {

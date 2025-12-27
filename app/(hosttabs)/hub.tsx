@@ -510,7 +510,6 @@ export default function HostHubScreen() {
       if (photoCount === 0) missingPhotos++;
       if (Number(c.price_per_day || 0) <= 0) missingPrice++;
       if (completion.pct < 90) incompleteListings++;
-      console.log("DERIVING HUB FROM CARS", st);
       return {
         car: c,
         status: st,

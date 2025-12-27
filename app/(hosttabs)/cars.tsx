@@ -552,8 +552,6 @@ export default function HostCars() {
         const listRaw = Array.isArray(json?.items) ? json.items : [];
         const list: HostCar[] = listRaw.filter(Boolean);
 
-        console.log("FETCHED CARS PAGE", list);
-
         const pageTotal =
           typeof json?.page?.total === "number"
             ? json.page.total

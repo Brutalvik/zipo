@@ -333,12 +333,7 @@ export default function NearbyScreen() {
       setIsLoading(true);
       try {
         const resp = await fetch(url);
-
-        console.log("cars/map url =>", url);
         const json = await resp.json();
-
-        console.log("JSON: ", json);
-
         const listRaw = Array.isArray((json as any)?.items)
           ? (json as any).items
           : Array.isArray(json)
@@ -393,7 +388,6 @@ export default function NearbyScreen() {
         });
 
         setCars(normalized);
-        console.log("NORMALIZED : ", normalized);
       } catch (e) {
         console.warn("cars/map fetch failed", e);
         setCars([]);
