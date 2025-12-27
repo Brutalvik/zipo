@@ -1,17 +1,27 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+// app/host-car-details.tsx
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Calendar } from "react-native-calendars";
 import { auth } from "@/services/firebase";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
@@ -21,18 +31,29 @@ type HostCar = {
   id: string;
   title?: string | null;
   status?: string | null;
+
   vehicle_type?: string | null;
   transmission?: string | null;
   seats?: number | null;
+
   price_per_day?: number | null;
   currency?: string | null;
+
   country_code?: string | null;
   city?: string | null;
   area?: string | null;
+
   full_address?: string | null;
   pickup_address?: string | null;
+
   image_path?: string | null;
   image_gallery?: any[] | string[] | null;
+
+  odometer_km?: number | null;
+
+  features?: any; // jsonb
+  requirements?: any; // jsonb
+
   updated_at?: string | null;
 };
 
@@ -140,6 +161,70 @@ function KeyValueRow({
   );
 }
 
+/** --------- Features catalog (icons + ids) --------- */
+const FEATURE_ITEMS: Array<{
+  id: string;
+  label: string;
+  icon: keyof typeof Feather.glyphMap;
+}> = [
+  { id: "bluetooth", label: "Bluetooth", icon: "bluetooth" },
+  { id: "apple_carplay", label: "Apple CarPlay", icon: "smartphone" },
+  { id: "android_auto", label: "Android Auto", icon: "smartphone" },
+  { id: "backup_camera", label: "Backup camera", icon: "camera" },
+  { id: "heated_seats", label: "Heated seats", icon: "wind" },
+  { id: "sunroof", label: "Sunroof", icon: "sun" },
+  { id: "all_wheel_drive", label: "AWD", icon: "compass" },
+  { id: "navigation", label: "Navigation", icon: "map" },
+  { id: "usb", label: "USB", icon: "cpu" },
+  { id: "pet_friendly", label: "Pet friendly", icon: "heart" },
+];
+
+function toDateKey(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseDateKey(key: string) {
+  const [y, m, d] = key.split("-").map((x) => Number(x));
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+function isBeforeDateKey(a: string, b: string) {
+  return parseDateKey(a).getTime() < parseDateKey(b).getTime();
+}
+
+function dateRangeKeys(startKey: string, endKey: string) {
+  const start = parseDateKey(startKey);
+  const end = parseDateKey(endKey);
+  const dir = start.getTime() <= end.getTime() ? 1 : -1;
+
+  const out: string[] = [];
+  const cur = new Date(start);
+
+  while (true) {
+    out.push(toDateKey(cur));
+    if (toDateKey(cur) === toDateKey(end)) break;
+    cur.setDate(cur.getDate() + dir);
+    if (out.length > 400) break;
+  }
+
+  return out.sort(
+    (x, y) => parseDateKey(x).getTime() - parseDateKey(y).getTime()
+  );
+}
+
+function arraysEqual(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function uniqSortedStrings(xs: string[]) {
+  return Array.from(new Set(xs.filter((x) => typeof x === "string"))).sort();
+}
+
 export default function HostCarDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -148,13 +233,59 @@ export default function HostCarDetails() {
   const [car, setCar] = useState<HostCar | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const cover = useMemo(() => (car ? getCoverUrl(car) : ""), [car]);
   const gallery = useMemo(() => (car ? getGalleryUrls(car) : []), [car]);
 
+  // -------- Local editable state (NOT auto-saving) --------
+  const [odoText, setOdoText] = useState("");
+  const [amenitiesLocal, setAmenitiesLocal] = useState<string[]>([]);
+  const [blockedLocal, setBlockedLocal] = useState<string[]>([]);
+
+  // Initial snapshot for dirty-check
+  const initialRef = useRef<{
+    odometer_km: number;
+    amenities: string[];
+    blocked: string[];
+  } | null>(null);
+
+  // Range selection UI
+  const todayKey = useMemo(() => toDateKey(new Date()), []);
+  const [rangeStart, setRangeStart] = useState<string | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<string | null>(null);
+
+  const odometerLocked = useMemo(() => {
+    return Number(car?.odometer_km ?? 0) > 0;
+  }, [car?.odometer_km]);
+
+  const isDirty = useMemo(() => {
+    const init = initialRef.current;
+    if (!init) return false;
+
+    const odoNow = Number(String(odoText).replace(/[^\d]/g, "")) || 0;
+    const aNow = uniqSortedStrings(amenitiesLocal);
+    const bNow = uniqSortedStrings(blockedLocal);
+
+    return (
+      odoNow !== init.odometer_km ||
+      !arraysEqual(aNow, init.amenities) ||
+      !arraysEqual(bNow, init.blocked)
+    );
+  }, [odoText, amenitiesLocal, blockedLocal]);
+
+  const isActive = useMemo(
+    () => String(car?.status || "").toLowerCase() === "active",
+    [car?.status]
+  );
+
+  const primaryLabel = useMemo(
+    () => (isActive ? "Update" : "Publish"),
+    [isActive]
+  );
+
   const loadCar = useCallback(async () => {
     if (!carId) throw new Error("Missing carId");
-
     setLoading(true);
     try {
       const token = await getIdToken();
@@ -169,7 +300,26 @@ export default function HostCarDetails() {
       if (!res.ok) throw new Error(text || "Failed to load car");
 
       const json = JSON.parse(text);
-      setCar(json?.car ?? null);
+      const c: HostCar | null = json?.car ?? null;
+      setCar(c);
+
+      const odo = Number(c?.odometer_km ?? 0) || 0;
+      const amenities = uniqSortedStrings(
+        Array.isArray(c?.features?.amenities) ? c!.features.amenities : []
+      );
+      const blocked = uniqSortedStrings(
+        Array.isArray(c?.requirements?.availability?.blockedDates)
+          ? c!.requirements.availability.blockedDates
+          : []
+      );
+
+      setOdoText(odo ? String(odo) : "");
+      setAmenitiesLocal(amenities);
+      setBlockedLocal(blocked);
+
+      initialRef.current = { odometer_km: odo, amenities, blocked };
+
+      return c; // ✅ IMPORTANT
     } finally {
       setLoading(false);
     }
@@ -181,6 +331,180 @@ export default function HostCarDetails() {
       setLoading(false);
     });
   }, [loadCar]);
+
+  const patchCar = useCallback(
+    async (patch: Partial<HostCar>) => {
+      const token = await getIdToken();
+      const res = await fetch(
+        `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(patch),
+        }
+      );
+
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || "Failed to update car");
+
+      const json = JSON.parse(text);
+      console.log("PATCH PAYLOAD", json?.car);
+      return json?.car;
+    },
+    [carId]
+  );
+
+  const saveOnly = useCallback(async () => {
+    if (!car) throw new Error("Car not loaded");
+
+    const amenities = uniqSortedStrings(amenitiesLocal);
+    const blocked = uniqSortedStrings(blockedLocal);
+
+    // ✅ Only compute/validate odo if it is NOT locked
+    const odoRaw = String(odoText).replace(/[^\d]/g, "");
+    const odo = odoRaw ? Number(odoRaw) : 0;
+
+    if (!odometerLocked) {
+      if (!Number.isFinite(odo) || odo <= 0) {
+        throw new Error("Please enter a valid odometer in KM.");
+      }
+      if (!isActive && odo > 200000) {
+        throw new Error(
+          "Car cannot be registered because it is more than 200,000 km."
+        );
+      }
+    }
+
+    // ✅ Build patch without accidentally overwriting odometer
+    const patch: any = {
+      features: {
+        ...(car.features || {}),
+        amenities,
+      },
+      requirements: {
+        ...(car.requirements || {}),
+        availability: {
+          ...(car.requirements?.availability || {}),
+          timezone:
+            car.requirements?.availability?.timezone || "America/Edmonton",
+          blockedDates: blocked,
+        },
+      },
+    };
+
+    if (!odometerLocked) {
+      patch.odometer_km = odo; // ✅ only set once
+    }
+
+    await patchCar(patch);
+
+    // ✅ Re-fetch canonical state so UI locks correctly
+    const fresh = await loadCar();
+
+    const freshOdo = Number(fresh?.odometer_km ?? 0) || 0;
+    initialRef.current = { odometer_km: freshOdo, amenities, blocked };
+  }, [
+    car,
+    amenitiesLocal,
+    blockedLocal,
+    odoText,
+    odometerLocked,
+    isActive,
+    patchCar,
+    loadCar,
+  ]);
+
+  const onPrimaryAction = useCallback(async () => {
+    if (!car) return;
+
+    if (!isDirty) {
+      Alert.alert("No changes", "You haven’t made any changes to update.");
+      return;
+    }
+
+    try {
+      setBusy(true);
+      await saveOnly();
+
+      if (!isActive) {
+        // Publish
+        const token = await getIdToken();
+        const res = await fetch(
+          `${API_BASE}/api/host/cars/${encodeURIComponent(car.id)}/publish`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || "Failed to publish");
+
+        router.replace("/(hosttabs)/cars");
+      } else {
+        Alert.alert("Updated", "Car details updated.");
+        router.replace("/(hosttabs)/cars");
+      }
+    } catch (e: any) {
+      const msg = e?.message || "Could not complete this action.";
+      if (String(msg).includes("200,000")) {
+        Alert.alert("Cannot register", msg, [
+          { text: "OK", onPress: () => router.replace("/(hosttabs)/cars") },
+        ]);
+      } else {
+        Alert.alert("Action failed", msg);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [car, isDirty, saveOnly, isActive, router]);
+
+  const confirmLeave = useCallback(
+    (goBack: () => void) => {
+      if (!isDirty) {
+        goBack();
+        return;
+      }
+
+      Alert.alert(
+        "Unsaved changes",
+        "Do you want to save your changes before leaving?",
+        [
+          { text: "Discard", style: "destructive", onPress: goBack },
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Save",
+            onPress: async () => {
+              try {
+                setBusy(true);
+                await saveOnly();
+                goBack();
+              } catch (e: any) {
+                Alert.alert(
+                  "Save failed",
+                  e?.message || "Could not save changes."
+                );
+              } finally {
+                setBusy(false);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [isDirty, saveOnly]
+  );
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      confirmLeave(() => router.back());
+      return true;
+    });
+    return () => sub.remove();
+  }, [confirmLeave, router]);
 
   const onDelete = useCallback(() => {
     if (!car) return;
@@ -214,7 +538,6 @@ export default function HostCarDetails() {
                 params: { refresh: "1" },
               });
             } catch (e: any) {
-              console.warn("delete failed", e?.message || e);
               Alert.alert(
                 "Delete failed",
                 e?.message || "Could not delete this car."
@@ -227,6 +550,108 @@ export default function HostCarDetails() {
       ]
     );
   }, [car, router]);
+
+  // Availability: smart range apply
+  const applyRangeSmartLocal = useCallback(
+    (rangeKeys: string[]) => {
+      if (!rangeKeys.length) return;
+
+      const set = new Set(blockedLocal);
+      const anyUnblocked = rangeKeys.some((k) => !set.has(k));
+
+      // Smart: if any day is currently available -> block entire range, else unblock entire range
+      if (anyUnblocked) {
+        for (const k of rangeKeys) set.add(k);
+      } else {
+        for (const k of rangeKeys) set.delete(k);
+      }
+
+      setBlockedLocal(Array.from(set).sort());
+    },
+    [blockedLocal]
+  );
+
+  const onDayPress = useCallback(
+    (dateString: string) => {
+      if (!dateString) return;
+      if (isBeforeDateKey(dateString, todayKey)) return;
+
+      if (!rangeStart) {
+        setRangeStart(dateString);
+        setRangeEnd(null);
+        return;
+      }
+
+      if (rangeStart && !rangeEnd) {
+        setRangeEnd(dateString);
+
+        const keys = dateRangeKeys(rangeStart, dateString).filter(
+          (k) => !isBeforeDateKey(k, todayKey)
+        );
+
+        applyRangeSmartLocal(keys);
+
+        // clear selection after applying; blocked range remains highlighted
+        setRangeStart(null);
+        setRangeEnd(null);
+        return;
+      }
+
+      setRangeStart(dateString);
+      setRangeEnd(null);
+    },
+    [rangeStart, rangeEnd, todayKey, applyRangeSmartLocal]
+  );
+
+  const toggleAmenityLocal = useCallback(
+    (id: string) => {
+      const set = new Set(amenitiesLocal);
+      if (set.has(id)) set.delete(id);
+      else set.add(id);
+      setAmenitiesLocal(Array.from(set).sort());
+    },
+    [amenitiesLocal]
+  );
+
+  // Calendar markings:
+  // - ONLY show blockedLocal as a proper period range (no extra “selected list” below)
+  // - ensure rounded ends by setting startingDay/endingDay flags for contiguous dates
+  const markedDates = useMemo(() => {
+    const out: Record<string, any> = {};
+    const set = new Set(blockedLocal);
+
+    for (const k of blockedLocal) {
+      const d = parseDateKey(k);
+      const prev = toDateKey(
+        new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1)
+      );
+      const next = toDateKey(
+        new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)
+      );
+      const hasPrev = set.has(prev);
+      const hasNext = set.has(next);
+
+      out[k] = {
+        startingDay: !hasPrev,
+        endingDay: !hasNext,
+        color: "rgba(17,24,39,0.22)",
+        textColor: "#111827",
+      };
+    }
+
+    // OPTIONAL: if user tapped a start date (but not end yet) give a subtle single-day preview
+    if (rangeStart && !rangeEnd && !isBeforeDateKey(rangeStart, todayKey)) {
+      out[rangeStart] = {
+        ...(out[rangeStart] || {}),
+        startingDay: true,
+        endingDay: true,
+        color: "rgba(17,24,39,0.18)",
+        textColor: "#111827",
+      };
+    }
+
+    return out;
+  }, [blockedLocal, rangeStart, rangeEnd, todayKey]);
 
   if (!carId) {
     return (
@@ -242,7 +667,7 @@ export default function HostCarDetails() {
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => confirmLeave(() => router.back())}
           style={({ pressed }) => [
             styles.iconBtn,
             pressed && { opacity: 0.85 },
@@ -259,10 +684,10 @@ export default function HostCarDetails() {
 
         <Pressable
           onPress={onDelete}
-          disabled={deleting || loading}
+          disabled={deleting || loading || busy}
           style={({ pressed }) => [
             styles.deleteBtn,
-            (deleting || loading) && { opacity: 0.6 },
+            (deleting || loading || busy) && { opacity: 0.6 },
             pressed && { opacity: 0.85 },
           ]}
           accessibilityRole="button"
@@ -292,6 +717,7 @@ export default function HostCarDetails() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
+          {/* HERO */}
           <View style={styles.heroCard}>
             <View style={styles.heroCoverWrap}>
               {cover ? (
@@ -313,8 +739,20 @@ export default function HostCarDetails() {
                 {String(car.title || "Untitled")}
               </Text>
 
-              <View style={styles.statusPill}>
-                <Text style={styles.statusText}>{statusLabel(car.status)}</Text>
+              <View
+                style={[
+                  styles.statusPill,
+                  isActive ? styles.statusPillActive : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusText,
+                    isActive ? styles.statusTextActive : null,
+                  ]}
+                >
+                  {statusLabel(car.status)}
+                </Text>
               </View>
 
               <Text style={styles.heroMeta}>
@@ -349,9 +787,9 @@ export default function HostCarDetails() {
             </View>
           </View>
 
+          {/* DETAILS */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Details</Text>
-
             <KeyValueRow label="Car ID" value={String(car.id)} icon="hash" />
             <KeyValueRow
               label="Updated"
@@ -370,6 +808,152 @@ export default function HostCarDetails() {
             />
           </View>
 
+          {/* ODOMETER */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Odometer</Text>
+
+            {odometerLocked ? (
+              <View style={styles.odoDisplayRow}>
+                <View style={styles.odoLeft}>
+                  <View style={styles.odoIcon}>
+                    <Feather
+                      name="activity"
+                      size={14}
+                      color="rgba(17,24,39,0.70)"
+                    />
+                  </View>
+
+                  <View>
+                    <Text style={styles.odoLabel}>Current odometer</Text>
+                    <Text style={styles.odoHint}>Locked after publishing</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.odoValue}>
+                  {Number(car?.odometer_km ?? 0).toLocaleString("en-CA")} km
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.note}>
+                  Enter the odometer once. It will be locked after it’s set.
+                  Cars above 200,000 km cannot be registered.
+                </Text>
+
+                <View style={styles.inputWrap}>
+                  <TextInput
+                    value={odoText}
+                    editable
+                    onChangeText={(v) =>
+                      setOdoText(v.replace(/[^\d]/g, "").slice(0, 7))
+                    }
+                    placeholder="e.g. 123456"
+                    placeholderTextColor="rgba(17,24,39,0.35)"
+                    style={styles.input}
+                    keyboardType="number-pad"
+                  />
+                </View>
+              </>
+            )}
+          </View>
+
+          {/* AVAILABILITY */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Availability</Text>
+            <Text style={styles.note}>
+              Tap a start date, then an end date to toggle a range
+              (block/unblock). Past dates are disabled.
+            </Text>
+
+            <View style={styles.rangeRow}>
+              <View style={styles.rangePill}>
+                <Feather
+                  name="calendar"
+                  size={14}
+                  color="rgba(17,24,39,0.70)"
+                />
+                <Text style={styles.rangeText}>
+                  {!rangeStart ? (
+                    "Select Dates"
+                  ) : !rangeEnd ? (
+                    <>
+                      <Text style={styles.rangeDateText}>{rangeStart}</Text>
+                      <Text style={styles.rangeArrow}> → </Text>
+                      <Text style={styles.rangeDateText}>Select end date</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.rangeDateText}>{rangeStart}</Text>
+                      <Text style={styles.rangeArrow}> → </Text>
+                      <Text style={styles.rangeDateText}>{rangeEnd}</Text>
+                    </>
+                  )}
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => {
+                  setRangeStart(null);
+                  setRangeEnd(null);
+                }}
+                style={({ pressed }) => [
+                  styles.clearBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={styles.clearText}>Clear</Text>
+              </Pressable>
+            </View>
+
+            <Calendar
+              minDate={todayKey}
+              markingType="period"
+              markedDates={markedDates}
+              onDayPress={(day) => onDayPress(String(day?.dateString || ""))}
+              theme={{
+                textDayFontWeight: "800",
+                textMonthFontWeight: "900",
+                textDayHeaderFontWeight: "900",
+                arrowColor: "rgba(17,24,39,0.65)",
+                todayTextColor: "#111827",
+              }}
+            />
+          </View>
+
+          {/* FEATURES */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Features</Text>
+
+            <View style={styles.pillGrid}>
+              {FEATURE_ITEMS.map((f) => {
+                const on = amenitiesLocal.includes(f.id);
+                return (
+                  <Pressable
+                    key={f.id}
+                    onPress={() => toggleAmenityLocal(f.id)}
+                    style={({ pressed }) => [
+                      styles.featurePill,
+                      on ? styles.featureOn : styles.featureOff,
+                      pressed && { opacity: 0.92 },
+                    ]}
+                  >
+                    <Feather
+                      name={f.icon}
+                      size={14}
+                      color={on ? "rgba(17,24,39,0.95)" : "rgba(17,24,39,0.55)"}
+                    />
+                    <Text
+                      style={[styles.featureText, on && styles.featureTextOn]}
+                    >
+                      {f.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* PHOTOS */}
           {!!gallery.length && (
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>Photos</Text>
@@ -390,6 +974,42 @@ export default function HostCarDetails() {
               </ScrollView>
             </View>
           )}
+
+          {/* PRIMARY ACTION */}
+          <View style={styles.sectionCard}>
+            <View style={styles.actionHeaderRow}>
+              <Text style={styles.sectionTitle}>{primaryLabel}</Text>
+              {isDirty ? (
+                <View style={styles.dirtyPill}>
+                  <Text style={styles.dirtyText}>Unsaved</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <Pressable
+              onPress={onPrimaryAction}
+              disabled={busy || deleting}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                (busy || deleting) && { opacity: 0.6 },
+                pressed && { opacity: 0.9 },
+              ]}
+              accessibilityRole="button"
+            >
+              {busy ? (
+                <ActivityIndicator />
+              ) : (
+                <>
+                  <Feather
+                    name={primaryLabel === "Publish" ? "upload" : "check"}
+                    size={16}
+                    color="#111827"
+                  />
+                  <Text style={styles.primaryText}>{primaryLabel}</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
 
           <View style={{ height: 18 }} />
         </ScrollView>
@@ -502,12 +1122,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
   },
+  statusPillActive: {
+    backgroundColor: "rgba(16,185,129,0.12)", // subtle green
+    borderColor: "rgba(16,185,129,0.30)",
+  },
 
   statusText: {
     fontSize: 11,
     fontWeight: "900",
     color: "rgba(17,24,39,0.70)",
     textTransform: "capitalize",
+  },
+  statusTextActive: {
+    color: "rgba(6,95,70,0.95)",
   },
 
   heroMeta: {
@@ -574,6 +1201,93 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
+  note: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.45)",
+    lineHeight: 16,
+  },
+
+  inputWrap: {
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+  },
+
+  input: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#111827",
+    padding: 0,
+  },
+
+  rangeRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  rangePill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+  rangeText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.75)",
+  },
+  clearBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.20)",
+  },
+  clearText: { fontSize: 12, fontWeight: "900", color: "#991B1B" },
+
+  pillGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 },
+
+  featurePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  featureOn: {
+    backgroundColor: "rgba(59,130,246,0.10)", // subtle blue
+    borderColor: "rgba(59,130,246,0.22)",
+  },
+  featureOff: {
+    backgroundColor: "rgba(17,24,39,0.03)",
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+  featureText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
+  },
+  featureTextOn: {
+    color: "rgba(17,24,39,0.92)",
+  },
+
   photoRow: { paddingTop: 10, gap: 10 },
 
   thumbWrap: {
@@ -585,6 +1299,99 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
   },
-
   thumb: { width: "100%", height: "100%" },
+
+  actionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  dirtyPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(239,68,68,0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.20)",
+  },
+  dirtyText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#991B1B",
+  },
+
+  primaryBtn: {
+    marginTop: 12,
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 10,
+  },
+  primaryText: { fontSize: 14, fontWeight: "900", color: "#111827" },
+  inputWrapDisabled: {
+    backgroundColor: "rgba(17,24,39,0.04)",
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+  inputDisabled: {
+    color: "rgba(17,24,39,0.55)",
+  },
+  odoDisplayRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(17,24,39,0.06)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  odoLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+
+  odoIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    backgroundColor: "rgba(17,24,39,0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  odoLabel: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
+  },
+
+  odoHint: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.40)",
+  },
+  odoValue: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  rangeDateText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.75)",
+  },
+  rangeArrow: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(48, 206, 69, 1)",
+  },
 });
