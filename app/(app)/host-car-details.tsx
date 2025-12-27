@@ -174,6 +174,12 @@ function isInRange(key: string, start: string, end: string) {
   return k >= lo && k <= hi;
 }
 
+function normalizeRange(a: string, b: string) {
+  const A = String(a);
+  const B = String(b);
+  return A <= B ? { start: A, end: B } : { start: B, end: A };
+}
+
 /** --------- Features catalog (icons + ids) --------- */
 const FEATURE_ITEMS: Array<{
   id: string;
@@ -268,6 +274,13 @@ export default function HostCarDetails() {
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
 
+  // Persisted “display” range + message under calendar (until Clear)
+  const [displayRange, setDisplayRange] = useState<{
+    start: string;
+    end: string;
+  } | null>(null);
+  const [calendarNote, setCalendarNote] = useState<string>("");
+
   const odometerLocked = useMemo(() => {
     return Number(car?.odometer_km ?? 0) > 0;
   }, [car?.odometer_km]);
@@ -332,11 +345,15 @@ export default function HostCarDetails() {
 
       initialRef.current = { odometer_km: odo, amenities, blocked };
 
+      // Reset display message on initial load
+      setDisplayRange(null);
+      setCalendarNote("");
+
       return c; // ✅ IMPORTANT
     } finally {
       setLoading(false);
     }
-  }, [carId]);
+  }, [carId, todayKey]);
 
   useEffect(() => {
     loadCar().catch((e) => {
@@ -564,78 +581,90 @@ export default function HostCarDetails() {
     );
   }, [car, router]);
 
-  // ---------- SMART BLOCK/UNBLOCK (no code style changes elsewhere) ----------
-  const askRangeAction = useCallback((startKey: string, endKey: string) => {
-    return new Promise<"block" | "unblock" | "cancel">((resolve) => {
-      Alert.alert(
-        "Range has mixed dates",
-        `What do you want to do for ${startKey} → ${endKey}?`,
-        [
-          { text: "Cancel", style: "cancel", onPress: () => resolve("cancel") },
-          {
-            text: "Block range",
-            onPress: () => resolve("block"),
-          },
-          {
-            text: "Unblock range",
-            style: "destructive",
-            onPress: () => resolve("unblock"),
-          },
-        ]
-      );
-    });
-  }, []);
-
-  // Availability: smart range apply
-  const applyRangeSmartLocal = useCallback(
-    async (rangeKeys: string[], startKey: string, endKey: string) => {
+  // ---------- SMART BLOCK/UNBLOCK + messaging (deterministic) ----------
+  const applyRangeToggleWithAlert = useCallback(
+    (rangeKeys: string[], tappedStart: string, tappedEnd: string) => {
       if (!rangeKeys.length) return;
 
+      const { start, end } = normalizeRange(tappedStart, tappedEnd);
       const current = new Set(blockedLocal);
+
       let blockedCount = 0;
       for (const k of rangeKeys) if (current.has(k)) blockedCount++;
       const availableCount = rangeKeys.length - blockedCount;
 
-      // 1) If all blocked -> unblock
-      if (blockedCount === rangeKeys.length) {
-        for (const k of rangeKeys) current.delete(k);
-        setBlockedLocal(Array.from(current).sort());
-        return;
-      }
+      // Decide action:
+      // - all blocked -> unblock
+      // - otherwise -> block (mixed counts as block for predictability)
+      const action: "block" | "unblock" =
+        blockedCount === rangeKeys.length ? "unblock" : "block";
 
-      // 2) If all available -> block
-      if (availableCount === rangeKeys.length) {
-        for (const k of rangeKeys) current.add(k);
-        setBlockedLocal(Array.from(current).sort());
-        return;
-      }
+      const rangeLabel = start === end ? start : `${start} → ${end}`;
 
-      // 3) Mixed -> ask once (smart + predictable)
-      const action = await askRangeAction(startKey, endKey);
-      if (action === "cancel") return;
+      const note =
+        action === "unblock"
+          ? `This ${
+              start === end ? "date" : "range"
+            } will be unblocked: ${rangeLabel}.`
+          : `This ${
+              start === end ? "date" : "range"
+            } will be blocked: ${rangeLabel}.`;
 
-      if (action === "block") {
-        for (const k of rangeKeys) current.add(k);
-      } else {
-        for (const k of rangeKeys) current.delete(k);
-      }
+      Alert.alert(
+        action === "unblock" ? "Unblock dates" : "Block dates",
+        note,
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              const next = new Set(blockedLocal);
 
-      setBlockedLocal(Array.from(current).sort());
+              if (action === "block") {
+                for (const k of rangeKeys) next.add(k);
+              } else {
+                for (const k of rangeKeys) next.delete(k);
+              }
+
+              setBlockedLocal(Array.from(next).sort());
+
+              // Persist the pill text + message until Clear
+              setDisplayRange({ start, end });
+              setCalendarNote(note);
+
+              // Clear selection highlight after confirming
+              setRangeStart(null);
+              setRangeEnd(null);
+            },
+          },
+        ],
+        { cancelable: true }
+      );
     },
-    [blockedLocal, askRangeAction]
+    [blockedLocal]
   );
 
   const onDayPress = useCallback(
-    async (dateString: string) => {
+    (dateString: string) => {
       if (!dateString) return;
       if (isBeforeDateKey(dateString, todayKey)) return;
 
+      // First tap
       if (!rangeStart) {
         setRangeStart(dateString);
         setRangeEnd(null);
+
+        // Preview message for single-day intent (persists until clear / confirm)
+        const isBlocked = blockedLocal.includes(dateString);
+        const note = isBlocked
+          ? `This date will be unblocked: ${dateString}.`
+          : `This date will be blocked: ${dateString}.`;
+        setDisplayRange({ start: dateString, end: dateString });
+        setCalendarNote(note);
+
         return;
       }
 
+      // Second tap completes the range
       if (rangeStart && !rangeEnd) {
         setRangeEnd(dateString);
 
@@ -643,18 +672,22 @@ export default function HostCarDetails() {
           (k) => !isBeforeDateKey(k, todayKey)
         );
 
-        await applyRangeSmartLocal(keys, rangeStart, dateString);
-
-        // clear selection after applying; blocked dates remain struck-out
-        setRangeStart(null);
-        setRangeEnd(null);
+        applyRangeToggleWithAlert(keys, rangeStart, dateString);
         return;
       }
 
+      // Start a new selection
       setRangeStart(dateString);
       setRangeEnd(null);
+
+      const isBlocked = blockedLocal.includes(dateString);
+      const note = isBlocked
+        ? `This date will be unblocked: ${dateString}.`
+        : `This date will be blocked: ${dateString}.`;
+      setDisplayRange({ start: dateString, end: dateString });
+      setCalendarNote(note);
     },
-    [rangeStart, rangeEnd, todayKey, applyRangeSmartLocal]
+    [rangeStart, rangeEnd, todayKey, blockedLocal, applyRangeToggleWithAlert]
   );
 
   // Quick single-day unblock (long press)
@@ -674,6 +707,13 @@ export default function HostCarDetails() {
           onPress: () => {
             const next = blockedLocal.filter((k) => k !== key).sort();
             setBlockedLocal(next);
+
+            setDisplayRange({ start: key, end: key });
+            setCalendarNote(`This date will be unblocked: ${key}.`);
+
+            // clear selection highlight just in case
+            setRangeStart(null);
+            setRangeEnd(null);
           },
         },
       ]);
@@ -691,7 +731,7 @@ export default function HostCarDetails() {
     [amenitiesLocal]
   );
 
-  // Calendar markings:
+  // Calendar markings (kept)
   const markedDates = useMemo(() => {
     const out: Record<string, any> = {};
     const visibleBlocked = blockedLocal
@@ -720,7 +760,7 @@ export default function HostCarDetails() {
       };
     }
 
-    // ✅ Preview only if start selected and it's today+
+    // Preview only if start selected and it's today+
     if (rangeStart && !rangeEnd && String(rangeStart) >= String(todayKey)) {
       out[rangeStart] = {
         ...(out[rangeStart] || {}),
@@ -823,13 +863,17 @@ export default function HostCarDetails() {
               <View
                 style={[
                   styles.statusPill,
-                  isActive ? styles.statusPillActive : null,
+                  String(car?.status || "").toLowerCase() === "active"
+                    ? styles.statusPillActive
+                    : null,
                 ]}
               >
                 <Text
                   style={[
                     styles.statusText,
-                    isActive ? styles.statusTextActive : null,
+                    String(car?.status || "").toLowerCase() === "active"
+                      ? styles.statusTextActive
+                      : null,
                   ]}
                 >
                   {statusLabel(car.status)}
@@ -954,21 +998,47 @@ export default function HostCarDetails() {
                   size={14}
                   color="rgba(17,24,39,0.70)"
                 />
+
                 <Text style={styles.rangeText}>
-                  {!rangeStart ? (
-                    "Select Dates"
-                  ) : !rangeEnd ? (
-                    <>
-                      <Text style={styles.rangeDateText}>{rangeStart}</Text>
-                      <Text style={styles.rangeArrow}> → </Text>
-                      <Text style={styles.rangeDateText}>Select end date</Text>
-                    </>
+                  {rangeStart ? (
+                    !rangeEnd ? (
+                      <>
+                        <Text style={styles.rangeDateText}>{rangeStart}</Text>
+                        <Text style={styles.rangeArrow}> → </Text>
+                        <Text style={styles.rangeDateText}>
+                          Select end date
+                        </Text>
+                      </>
+                    ) : (
+                      (() => {
+                        const n = normalizeRange(rangeStart, rangeEnd);
+                        return (
+                          <>
+                            <Text style={styles.rangeDateText}>{n.start}</Text>
+                            <Text style={styles.rangeArrow}> → </Text>
+                            <Text style={styles.rangeDateText}>{n.end}</Text>
+                          </>
+                        );
+                      })()
+                    )
+                  ) : displayRange ? (
+                    displayRange.start === displayRange.end ? (
+                      <Text style={styles.rangeDateText}>
+                        {displayRange.start}
+                      </Text>
+                    ) : (
+                      <>
+                        <Text style={styles.rangeDateText}>
+                          {displayRange.start}
+                        </Text>
+                        <Text style={styles.rangeArrow}> → </Text>
+                        <Text style={styles.rangeDateText}>
+                          {displayRange.end}
+                        </Text>
+                      </>
+                    )
                   ) : (
-                    <>
-                      <Text style={styles.rangeDateText}>{rangeStart}</Text>
-                      <Text style={styles.rangeArrow}> → </Text>
-                      <Text style={styles.rangeDateText}>{rangeEnd}</Text>
-                    </>
+                    "Select Dates"
                   )}
                 </Text>
               </View>
@@ -977,6 +1047,8 @@ export default function HostCarDetails() {
                 onPress={() => {
                   setRangeStart(null);
                   setRangeEnd(null);
+                  setDisplayRange(null);
+                  setCalendarNote("");
                 }}
                 style={({ pressed }) => [
                   styles.clearBtn,
@@ -1026,7 +1098,6 @@ export default function HostCarDetails() {
 
                 const onPress = () => {
                   if (isPast) return;
-                  // we intentionally don't await here; it's fine for UI
                   onDayPress(key);
                 };
 
@@ -1056,16 +1127,11 @@ export default function HostCarDetails() {
                       <View style={styles.diagonalStrike} />
                     ) : null}
 
-                    {/* Date text */}
                     <Text
                       style={[
                         styles.dayText,
                         isPast ? styles.dayTextDisabled : null,
-
-                        // ✅ blocked dates = subtle red + bold (NO background)
                         isBlocked && !selecting ? styles.dayTextBlocked : null,
-
-                        // if selecting, keep text readable
                         selecting ? styles.dayTextOnSelection : null,
                       ]}
                     >
@@ -1082,6 +1148,14 @@ export default function HostCarDetails() {
                 textDisabledColor: "rgba(17,24,39,0.25)",
               }}
             />
+
+            {calendarNote ? (
+              <View style={{ marginTop: 10 }}>
+                <Text style={[styles.note, { color: "rgba(17,24,39,0.55)" }]}>
+                  {calendarNote}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           {/* FEATURES */}
@@ -1287,7 +1361,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(17,24,39,0.10)",
   },
   statusPillActive: {
-    backgroundColor: "rgba(16,185,129,0.12)", // subtle green
+    backgroundColor: "rgba(16,185,129,0.12)",
     borderColor: "rgba(16,185,129,0.30)",
   },
 
@@ -1436,7 +1510,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   featureOn: {
-    backgroundColor: "rgba(59,130,246,0.10)", // subtle blue
+    backgroundColor: "rgba(59,130,246,0.10)",
     borderColor: "rgba(59,130,246,0.22)",
   },
   featureOff: {
@@ -1499,13 +1573,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   primaryText: { fontSize: 14, fontWeight: "900", color: "#111827" },
-  inputWrapDisabled: {
-    backgroundColor: "rgba(17,24,39,0.04)",
-    borderColor: "rgba(17,24,39,0.10)",
-  },
-  inputDisabled: {
-    color: "rgba(17,24,39,0.55)",
-  },
+
   odoDisplayRow: {
     marginTop: 12,
     paddingTop: 12,
@@ -1558,6 +1626,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "rgba(48, 206, 69, 1)",
   },
+
   dayCell: {
     width: 44,
     height: 44,
