@@ -1,14 +1,17 @@
+// app/_layout.tsx
+import "react-native-gesture-handler";
+
 import React from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { store } from "@/redux/store";
 import { Provider } from "react-redux";
 import AuthGuard from "@/app/AuthGuard";
 
 function RootLayoutNav() {
   return (
-    // Wrap the navigation stack with SafeAreaProvider and StatusBar
     <SafeAreaProvider>
       <StatusBar style="light" />
       <Stack
@@ -26,13 +29,14 @@ function RootLayoutNav() {
   );
 }
 
-// The main default export that wraps the application with Redux and the AuthGuard
 export default function RootLayout() {
   return (
-    <Provider store={store}>
-      <AuthGuard>
-        <RootLayoutNav />
-      </AuthGuard>
-    </Provider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <Provider store={store}>
+        <AuthGuard>
+          <RootLayoutNav />
+        </AuthGuard>
+      </Provider>
+    </GestureHandlerRootView>
   );
 }

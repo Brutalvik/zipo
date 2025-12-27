@@ -63,6 +63,9 @@ async function getIdToken() {
   return token;
 }
 
+// -------------------------
+// URL helpers
+// -------------------------
 function isHttpUrl(u: string) {
   return /^https?:\/\//i.test(u);
 }
@@ -98,6 +101,9 @@ function getCoverUrl(car: HostCar) {
   return getGalleryUrls(car)[0] || "";
 }
 
+// -------------------------
+// Formatting helpers
+// -------------------------
 function money(n: any, currency: string) {
   const num = Number(n);
   if (!Number.isFinite(num)) return "";
@@ -136,6 +142,84 @@ function formatUpdatedAt(v?: string | null) {
   }
 }
 
+// -------------------------
+// Date helpers (YYYY-MM-DD)
+// -------------------------
+function toDateKey(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseDateKey(key: string) {
+  const [y, m, d] = key.split("-").map((x) => Number(x));
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+function isBeforeDateKey(a: string, b: string) {
+  return String(a) < String(b);
+}
+
+function isSameOrAfter(a: string, b: string) {
+  return String(a) >= String(b);
+}
+
+function normalizeRange(a: string, b: string) {
+  const A = String(a);
+  const B = String(b);
+  return A <= B ? { start: A, end: B } : { start: B, end: A };
+}
+
+function isInRange(key: string, start: string, end: string) {
+  const a = String(start);
+  const b = String(end);
+  const k = String(key);
+  const lo = a <= b ? a : b;
+  const hi = a <= b ? b : a;
+  return k >= lo && k <= hi;
+}
+
+function dateRangeKeys(startKey: string, endKey: string) {
+  const start = parseDateKey(startKey);
+  const end = parseDateKey(endKey);
+  const dir = start.getTime() <= end.getTime() ? 1 : -1;
+
+  const out: string[] = [];
+  const cur = new Date(start);
+
+  while (true) {
+    out.push(toDateKey(cur));
+    if (toDateKey(cur) === toDateKey(end)) break;
+    cur.setDate(cur.getDate() + dir);
+    if (out.length > 400) break;
+  }
+
+  return out.sort(
+    (x, y) => parseDateKey(x).getTime() - parseDateKey(y).getTime()
+  );
+}
+
+// -------------------------
+// Array helpers
+// -------------------------
+function arraysEqual(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function uniqSortedStrings(xs: string[]) {
+  return Array.from(new Set(xs.filter((x) => typeof x === "string"))).sort();
+}
+
+function sanitizeOdoText(v: string) {
+  return String(v).replace(/[^\d]/g, "").slice(0, 7);
+}
+
+// -------------------------
+// UI
+// -------------------------
 function KeyValueRow({
   label,
   value,
@@ -161,25 +245,6 @@ function KeyValueRow({
   );
 }
 
-function isSameOrAfter(a: string, b: string) {
-  return String(a) >= String(b);
-}
-
-function isInRange(key: string, start: string, end: string) {
-  const a = String(start);
-  const b = String(end);
-  const k = String(key);
-  const lo = a <= b ? a : b;
-  const hi = a <= b ? b : a;
-  return k >= lo && k <= hi;
-}
-
-function normalizeRange(a: string, b: string) {
-  const A = String(a);
-  const B = String(b);
-  return A <= B ? { start: A, end: B } : { start: B, end: A };
-}
-
 /** --------- Features catalog (icons + ids) --------- */
 const FEATURE_ITEMS: Array<{
   id: string;
@@ -198,52 +263,6 @@ const FEATURE_ITEMS: Array<{
   { id: "pet_friendly", label: "Pet friendly", icon: "heart" },
 ];
 
-function toDateKey(d: Date) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function parseDateKey(key: string) {
-  const [y, m, d] = key.split("-").map((x) => Number(x));
-  return new Date(y, (m || 1) - 1, d || 1);
-}
-
-function isBeforeDateKey(a: string, b: string) {
-  return String(a) < String(b);
-}
-
-function dateRangeKeys(startKey: string, endKey: string) {
-  const start = parseDateKey(startKey);
-  const end = parseDateKey(endKey);
-  const dir = start.getTime() <= end.getTime() ? 1 : -1;
-
-  const out: string[] = [];
-  const cur = new Date(start);
-
-  while (true) {
-    out.push(toDateKey(cur));
-    if (toDateKey(cur) === toDateKey(end)) break;
-    cur.setDate(cur.getDate() + dir);
-    if (out.length > 400) break;
-  }
-
-  return out.sort(
-    (x, y) => parseDateKey(x).getTime() - parseDateKey(y).getTime()
-  );
-}
-
-function arraysEqual(a: string[], b: string[]) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
-
-function uniqSortedStrings(xs: string[]) {
-  return Array.from(new Set(xs.filter((x) => typeof x === "string"))).sort();
-}
-
 export default function HostCarDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -260,7 +279,11 @@ export default function HostCarDetails() {
   // -------- Local editable state (NOT auto-saving) --------
   const [odoText, setOdoText] = useState("");
   const [amenitiesLocal, setAmenitiesLocal] = useState<string[]>([]);
-  const [blockedLocal, setBlockedLocal] = useState<string[]>([]);
+  const [blockedLocal, setBlockedLocal] = useState<string[]>([]); // keep sorted
+
+  // For O(1) membership checks in calendar rendering
+  const blockedSet = useMemo(() => new Set(blockedLocal), [blockedLocal]);
+  const amenitiesSet = useMemo(() => new Set(amenitiesLocal), [amenitiesLocal]);
 
   // Initial snapshot for dirty-check
   const initialRef = useRef<{
@@ -281,9 +304,20 @@ export default function HostCarDetails() {
   } | null>(null);
   const [calendarNote, setCalendarNote] = useState<string>("");
 
-  const odometerLocked = useMemo(() => {
-    return Number(car?.odometer_km ?? 0) > 0;
-  }, [car?.odometer_km]);
+  const odometerLocked = useMemo(
+    () => Number(car?.odometer_km ?? 0) > 0,
+    [car?.odometer_km]
+  );
+
+  const isActive = useMemo(
+    () => String(car?.status || "").toLowerCase() === "active",
+    [car?.status]
+  );
+
+  const primaryLabel = useMemo(
+    () => (isActive ? "Update" : "Publish"),
+    [isActive]
+  );
 
   const isDirty = useMemo(() => {
     const init = initialRef.current;
@@ -299,16 +333,6 @@ export default function HostCarDetails() {
       !arraysEqual(bNow, init.blocked)
     );
   }, [odoText, amenitiesLocal, blockedLocal]);
-
-  const isActive = useMemo(
-    () => String(car?.status || "").toLowerCase() === "active",
-    [car?.status]
-  );
-
-  const primaryLabel = useMemo(
-    () => (isActive ? "Update" : "Publish"),
-    [isActive]
-  );
 
   const loadCar = useCallback(async () => {
     if (!carId) throw new Error("Missing carId");
@@ -330,9 +354,11 @@ export default function HostCarDetails() {
       setCar(c);
 
       const odo = Number(c?.odometer_km ?? 0) || 0;
+
       const amenities = uniqSortedStrings(
         Array.isArray(c?.features?.amenities) ? c!.features.amenities : []
       );
+
       const blocked = uniqSortedStrings(
         Array.isArray(c?.requirements?.availability?.blockedDates)
           ? c!.requirements.availability.blockedDates
@@ -587,20 +613,13 @@ export default function HostCarDetails() {
       if (!rangeKeys.length) return;
 
       const { start, end } = normalizeRange(tappedStart, tappedEnd);
-      const current = new Set(blockedLocal);
 
       let blockedCount = 0;
-      for (const k of rangeKeys) if (current.has(k)) blockedCount++;
-      const availableCount = rangeKeys.length - blockedCount;
-
-      // Decide action:
-      // - all blocked -> unblock
-      // - otherwise -> block (mixed counts as block for predictability)
+      for (const k of rangeKeys) if (blockedSet.has(k)) blockedCount++;
       const action: "block" | "unblock" =
         blockedCount === rangeKeys.length ? "unblock" : "block";
 
       const rangeLabel = start === end ? start : `${start} → ${end}`;
-
       const note =
         action === "unblock"
           ? `This ${
@@ -632,15 +651,14 @@ export default function HostCarDetails() {
               setCalendarNote(note);
 
               // Clear selection highlight after confirming
-              setRangeStart(null);
-              setRangeEnd(null);
+              // setRangeStart(null);
+              // setRangeEnd(null);
             },
           },
-        ],
-        { cancelable: true }
+        ]
       );
     },
-    [blockedLocal]
+    [blockedLocal, blockedSet]
   );
 
   const onDayPress = useCallback(
@@ -654,7 +672,7 @@ export default function HostCarDetails() {
         setRangeEnd(null);
 
         // Preview message for single-day intent (persists until clear / confirm)
-        const isBlocked = blockedLocal.includes(dateString);
+        const isBlocked = blockedSet.has(dateString);
         const note = isBlocked
           ? `This date will be unblocked: ${dateString}.`
           : `This date will be blocked: ${dateString}.`;
@@ -680,14 +698,14 @@ export default function HostCarDetails() {
       setRangeStart(dateString);
       setRangeEnd(null);
 
-      const isBlocked = blockedLocal.includes(dateString);
+      const isBlocked = blockedSet.has(dateString);
       const note = isBlocked
         ? `This date will be unblocked: ${dateString}.`
         : `This date will be blocked: ${dateString}.`;
       setDisplayRange({ start: dateString, end: dateString });
       setCalendarNote(note);
     },
-    [rangeStart, rangeEnd, todayKey, blockedLocal, applyRangeToggleWithAlert]
+    [rangeStart, rangeEnd, todayKey, blockedSet, applyRangeToggleWithAlert]
   );
 
   // Quick single-day unblock (long press)
@@ -696,7 +714,7 @@ export default function HostCarDetails() {
       if (!key) return;
       if (isBeforeDateKey(key, todayKey)) return;
 
-      const isBlocked = blockedLocal.includes(key);
+      const isBlocked = blockedSet.has(key);
       if (!isBlocked) return;
 
       Alert.alert("Unblock date?", `Unblock ${key}?`, [
@@ -718,15 +736,15 @@ export default function HostCarDetails() {
         },
       ]);
     },
-    [blockedLocal, todayKey]
+    [blockedLocal, blockedSet, todayKey]
   );
 
   const toggleAmenityLocal = useCallback(
     (id: string) => {
-      const set = new Set(amenitiesLocal);
-      if (set.has(id)) set.delete(id);
-      else set.add(id);
-      setAmenitiesLocal(Array.from(set).sort());
+      const next = new Set(amenitiesLocal);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      setAmenitiesLocal(Array.from(next).sort());
     },
     [amenitiesLocal]
   );
@@ -737,7 +755,6 @@ export default function HostCarDetails() {
     const visibleBlocked = blockedLocal
       .filter((k) => String(k) >= String(todayKey))
       .sort();
-
     const set = new Set(visibleBlocked);
 
     for (const k of visibleBlocked) {
@@ -969,9 +986,7 @@ export default function HostCarDetails() {
                   <TextInput
                     value={odoText}
                     editable
-                    onChangeText={(v) =>
-                      setOdoText(v.replace(/[^\d]/g, "").slice(0, 7))
-                    }
+                    onChangeText={(v) => setOdoText(sanitizeOdoText(v))}
                     placeholder="e.g. 123456"
                     placeholderTextColor="rgba(17,24,39,0.35)"
                     style={styles.input}
@@ -1062,12 +1077,14 @@ export default function HostCarDetails() {
             <Calendar
               minDate={todayKey}
               disableAllTouchEventsForDisabledDays
+              // NOTE: markedDates is kept (no logic change), but we are using dayComponent rendering
+              // markedDates={markedDates}
               dayComponent={({ date }) => {
                 const key = String(date?.dateString || "");
                 if (!key) return null;
 
                 const isPast = !isSameOrAfter(key, todayKey);
-                const isBlocked = blockedLocal.includes(key);
+                const isBlocked = blockedSet.has(key);
 
                 // ✅ show range highlight ONLY while selecting
                 const selecting =
@@ -1164,7 +1181,7 @@ export default function HostCarDetails() {
 
             <View style={styles.pillGrid}>
               {FEATURE_ITEMS.map((f) => {
-                const on = amenitiesLocal.includes(f.id);
+                const on = amenitiesSet.has(f.id);
                 return (
                   <Pressable
                     key={f.id}
