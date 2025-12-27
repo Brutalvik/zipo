@@ -564,28 +564,69 @@ export default function HostCarDetails() {
     );
   }, [car, router]);
 
+  // ---------- SMART BLOCK/UNBLOCK (no code style changes elsewhere) ----------
+  const askRangeAction = useCallback((startKey: string, endKey: string) => {
+    return new Promise<"block" | "unblock" | "cancel">((resolve) => {
+      Alert.alert(
+        "Range has mixed dates",
+        `What do you want to do for ${startKey} → ${endKey}?`,
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve("cancel") },
+          {
+            text: "Block range",
+            onPress: () => resolve("block"),
+          },
+          {
+            text: "Unblock range",
+            style: "destructive",
+            onPress: () => resolve("unblock"),
+          },
+        ]
+      );
+    });
+  }, []);
+
   // Availability: smart range apply
   const applyRangeSmartLocal = useCallback(
-    (rangeKeys: string[]) => {
+    async (rangeKeys: string[], startKey: string, endKey: string) => {
       if (!rangeKeys.length) return;
 
-      const set = new Set(blockedLocal);
-      const anyUnblocked = rangeKeys.some((k) => !set.has(k));
+      const current = new Set(blockedLocal);
+      let blockedCount = 0;
+      for (const k of rangeKeys) if (current.has(k)) blockedCount++;
+      const availableCount = rangeKeys.length - blockedCount;
 
-      // Smart: if any day is currently available -> block entire range, else unblock entire range
-      if (anyUnblocked) {
-        for (const k of rangeKeys) set.add(k);
-      } else {
-        for (const k of rangeKeys) set.delete(k);
+      // 1) If all blocked -> unblock
+      if (blockedCount === rangeKeys.length) {
+        for (const k of rangeKeys) current.delete(k);
+        setBlockedLocal(Array.from(current).sort());
+        return;
       }
 
-      setBlockedLocal(Array.from(set).sort());
+      // 2) If all available -> block
+      if (availableCount === rangeKeys.length) {
+        for (const k of rangeKeys) current.add(k);
+        setBlockedLocal(Array.from(current).sort());
+        return;
+      }
+
+      // 3) Mixed -> ask once (smart + predictable)
+      const action = await askRangeAction(startKey, endKey);
+      if (action === "cancel") return;
+
+      if (action === "block") {
+        for (const k of rangeKeys) current.add(k);
+      } else {
+        for (const k of rangeKeys) current.delete(k);
+      }
+
+      setBlockedLocal(Array.from(current).sort());
     },
-    [blockedLocal]
+    [blockedLocal, askRangeAction]
   );
 
   const onDayPress = useCallback(
-    (dateString: string) => {
+    async (dateString: string) => {
       if (!dateString) return;
       if (isBeforeDateKey(dateString, todayKey)) return;
 
@@ -602,9 +643,9 @@ export default function HostCarDetails() {
           (k) => !isBeforeDateKey(k, todayKey)
         );
 
-        applyRangeSmartLocal(keys);
+        await applyRangeSmartLocal(keys, rangeStart, dateString);
 
-        // clear selection after applying; blocked range remains highlighted
+        // clear selection after applying; blocked dates remain struck-out
         setRangeStart(null);
         setRangeEnd(null);
         return;
@@ -614,6 +655,30 @@ export default function HostCarDetails() {
       setRangeEnd(null);
     },
     [rangeStart, rangeEnd, todayKey, applyRangeSmartLocal]
+  );
+
+  // Quick single-day unblock (long press)
+  const onDayLongPress = useCallback(
+    (key: string) => {
+      if (!key) return;
+      if (isBeforeDateKey(key, todayKey)) return;
+
+      const isBlocked = blockedLocal.includes(key);
+      if (!isBlocked) return;
+
+      Alert.alert("Unblock date?", `Unblock ${key}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Unblock",
+          style: "destructive",
+          onPress: () => {
+            const next = blockedLocal.filter((k) => k !== key).sort();
+            setBlockedLocal(next);
+          },
+        },
+      ]);
+    },
+    [blockedLocal, todayKey]
   );
 
   const toggleAmenityLocal = useCallback(
@@ -878,7 +943,8 @@ export default function HostCarDetails() {
             <Text style={styles.sectionTitle}>Availability</Text>
             <Text style={styles.note}>
               Tap a start date, then an end date to toggle a range
-              (block/unblock). Past dates are disabled.
+              (block/unblock). Long-press a blocked date to unblock one day.
+              Past dates are disabled.
             </Text>
 
             <View style={styles.rangeRow}>
@@ -959,15 +1025,22 @@ export default function HostCarDetails() {
                   : null;
 
                 const onPress = () => {
-                  // Past dates never selectable
                   if (isPast) return;
+                  // we intentionally don't await here; it's fine for UI
                   onDayPress(key);
+                };
+
+                const onLongPress = () => {
+                  if (isPast) return;
+                  onDayLongPress(key);
                 };
 
                 return (
                   <Pressable
                     onPress={onPress}
+                    onLongPress={onLongPress}
                     disabled={isPast}
+                    delayLongPress={350}
                     style={({ pressed }) => [
                       styles.dayCell,
                       pressed && !isPast ? { opacity: 0.9 } : null,
