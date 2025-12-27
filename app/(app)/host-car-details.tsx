@@ -11,18 +11,25 @@ import {
   Alert,
   BackHandler,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Calendar } from "react-native-calendars";
 import { auth } from "@/services/firebase";
+
+// ✅ Drag-reorder (photos)
+import DraggableFlatList, {
+  RenderItemParams,
+} from "react-native-draggable-flatlist";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -55,6 +62,12 @@ type HostCar = {
   requirements?: any; // jsonb
 
   updated_at?: string | null;
+};
+
+type FeatureItem = {
+  id: string;
+  label: string;
+  icon: keyof typeof Feather.glyphMap;
 };
 
 async function getIdToken() {
@@ -218,7 +231,7 @@ function sanitizeOdoText(v: string) {
 }
 
 // -------------------------
-// UI
+// UI helpers
 // -------------------------
 function KeyValueRow({
   label,
@@ -245,23 +258,110 @@ function KeyValueRow({
   );
 }
 
-/** --------- Features catalog (icons + ids) --------- */
-const FEATURE_ITEMS: Array<{
-  id: string;
-  label: string;
-  icon: keyof typeof Feather.glyphMap;
-}> = [
+// ✅ Expanded “possible features” catalog (keeps your existing amenitiesLocal data model)
+const ALL_FEATURE_ITEMS: FeatureItem[] = [
+  // Comfort
+  { id: "air_conditioning", label: "Air conditioning", icon: "wind" },
+  { id: "heated_seats", label: "Heated seats", icon: "wind" },
+  { id: "ventilated_seats", label: "Ventilated seats", icon: "wind" },
+  { id: "heated_steering_wheel", label: "Heated steering wheel", icon: "wind" },
+  { id: "sunroof", label: "Sunroof", icon: "sun" },
+  { id: "panoramic_roof", label: "Panoramic roof", icon: "sun" },
+
+  // Tech
   { id: "bluetooth", label: "Bluetooth", icon: "bluetooth" },
   { id: "apple_carplay", label: "Apple CarPlay", icon: "smartphone" },
   { id: "android_auto", label: "Android Auto", icon: "smartphone" },
-  { id: "backup_camera", label: "Backup camera", icon: "camera" },
-  { id: "heated_seats", label: "Heated seats", icon: "wind" },
-  { id: "sunroof", label: "Sunroof", icon: "sun" },
-  { id: "all_wheel_drive", label: "AWD", icon: "compass" },
   { id: "navigation", label: "Navigation", icon: "map" },
   { id: "usb", label: "USB", icon: "cpu" },
+  { id: "wireless_charging", label: "Wireless charging", icon: "zap" },
+  { id: "keyless_entry", label: "Keyless entry", icon: "key" },
+  { id: "remote_start", label: "Remote start", icon: "power" },
+
+  // Safety
+  { id: "backup_camera", label: "Backup camera", icon: "camera" },
+  { id: "parking_sensors", label: "Parking sensors", icon: "crosshair" },
+  { id: "blind_spot_monitor", label: "Blind spot monitor", icon: "eye" },
+  { id: "lane_keep_assist", label: "Lane keep assist", icon: "navigation" },
+  { id: "adaptive_cruise", label: "Adaptive cruise", icon: "target" },
+
+  // Utility
+  { id: "all_wheel_drive", label: "AWD", icon: "compass" },
+  { id: "roof_rack", label: "Roof rack", icon: "package" },
+  { id: "tow_hitch", label: "Tow hitch", icon: "link" },
+  { id: "third_row", label: "3rd row seating", icon: "users" },
+  { id: "ski_rack", label: "Ski rack", icon: "archive" },
+
+  // Policies / convenience
   { id: "pet_friendly", label: "Pet friendly", icon: "heart" },
+  { id: "smoke_free", label: "Smoke-free", icon: "slash" },
+  { id: "child_seat", label: "Child seat", icon: "user" },
 ];
+
+// -------------------------
+// Top carousel (photo-first)
+// -------------------------
+function ImageCarousel({ urls }: { urls: string[] }) {
+  const { width } = Dimensions.get("window");
+  const itemW = Math.min(width - 36, 520);
+  const [idx, setIdx] = useState(0);
+
+  const onScroll = useCallback(
+    (e: any) => {
+      const x = e?.nativeEvent?.contentOffset?.x ?? 0;
+      const next = Math.round(x / itemW);
+      setIdx(next);
+    },
+    [itemW]
+  );
+
+  if (!urls.length) {
+    return (
+      <View style={[styles.carouselWrap, { width: itemW }]}>
+        <View style={styles.carouselEmpty}>
+          <Feather name="image" size={18} color="rgba(17,24,39,0.35)" />
+          <Text style={styles.coverEmptyText}>No photo</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ alignItems: "center" }}>
+      <View style={[styles.carouselWrap, { width: itemW }]}>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+        >
+          {urls.map((u) => (
+            <View key={u} style={{ width: itemW, height: "100%" }}>
+              <Image
+                source={{ uri: u }}
+                style={styles.carouselImg}
+                resizeMode="cover"
+              />
+              <View style={styles.carouselGrad} />
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+
+      {urls.length > 1 ? (
+        <View style={styles.dotsRow}>
+          {urls.map((_, i) => (
+            <View
+              key={String(i)}
+              style={[styles.dot, i === idx ? styles.dotOn : null]}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 export default function HostCarDetails() {
   const router = useRouter();
@@ -276,12 +376,19 @@ export default function HostCarDetails() {
   const cover = useMemo(() => (car ? getCoverUrl(car) : ""), [car]);
   const gallery = useMemo(() => (car ? getGalleryUrls(car) : []), [car]);
 
+  // ✅ local order for photos (UI-only reorder; does not change your existing backend save flow)
+  const [galleryLocal, setGalleryLocal] = useState<string[]>([]);
+  useEffect(() => {
+    // keep local list synced to canonical gallery when car loads/refetches
+    setGalleryLocal(gallery);
+  }, [gallery]);
+
   // -------- Local editable state (NOT auto-saving) --------
   const [odoText, setOdoText] = useState("");
   const [amenitiesLocal, setAmenitiesLocal] = useState<string[]>([]);
   const [blockedLocal, setBlockedLocal] = useState<string[]>([]); // keep sorted
 
-  // For O(1) membership checks in calendar rendering
+  // For O(1) membership checks
   const blockedSet = useMemo(() => new Set(blockedLocal), [blockedLocal]);
   const amenitiesSet = useMemo(() => new Set(amenitiesLocal), [amenitiesLocal]);
 
@@ -297,12 +404,15 @@ export default function HostCarDetails() {
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
 
-  // Persisted “display” range + message under calendar (until Clear)
+  // Persisted display range + message under calendar
   const [displayRange, setDisplayRange] = useState<{
     start: string;
     end: string;
   } | null>(null);
   const [calendarNote, setCalendarNote] = useState<string>("");
+
+  // ✅ “Add features” modal
+  const [addFeaturesOpen, setAddFeaturesOpen] = useState(false);
 
   const odometerLocked = useMemo(
     () => Number(car?.odometer_km ?? 0) > 0,
@@ -371,11 +481,10 @@ export default function HostCarDetails() {
 
       initialRef.current = { odometer_km: odo, amenities, blocked };
 
-      // Reset display message on initial load
       setDisplayRange(null);
       setCalendarNote("");
 
-      return c; // ✅ IMPORTANT
+      return c;
     } finally {
       setLoading(false);
     }
@@ -407,7 +516,6 @@ export default function HostCarDetails() {
       if (!res.ok) throw new Error(text || "Failed to update car");
 
       const json = JSON.parse(text);
-      console.log("PATCH PAYLOAD", json?.car);
       return json?.car;
     },
     [carId]
@@ -419,7 +527,6 @@ export default function HostCarDetails() {
     const amenities = uniqSortedStrings(amenitiesLocal);
     const blocked = uniqSortedStrings(blockedLocal);
 
-    // ✅ Only compute/validate odo if it is NOT locked
     const odoRaw = String(odoText).replace(/[^\d]/g, "");
     const odo = odoRaw ? Number(odoRaw) : 0;
 
@@ -434,7 +541,6 @@ export default function HostCarDetails() {
       }
     }
 
-    // ✅ Build patch without accidentally overwriting odometer
     const patch: any = {
       features: {
         ...(car.features || {}),
@@ -452,14 +558,12 @@ export default function HostCarDetails() {
     };
 
     if (!odometerLocked) {
-      patch.odometer_km = odo; // ✅ only set once
+      patch.odometer_km = odo;
     }
 
     await patchCar(patch);
 
-    // ✅ Re-fetch canonical state so UI locks correctly
     const fresh = await loadCar();
-
     const freshOdo = Number(fresh?.odometer_km ?? 0) || 0;
     initialRef.current = { odometer_km: freshOdo, amenities, blocked };
   }, [
@@ -486,7 +590,6 @@ export default function HostCarDetails() {
       await saveOnly();
 
       if (!isActive) {
-        // Publish
         const token = await getIdToken();
         const res = await fetch(
           `${API_BASE}/api/host/cars/${encodeURIComponent(car.id)}/publish`,
@@ -607,7 +710,7 @@ export default function HostCarDetails() {
     );
   }, [car, router]);
 
-  // ---------- SMART BLOCK/UNBLOCK + messaging (deterministic) ----------
+  // ---------- SMART BLOCK/UNBLOCK + messaging ----------
   const applyRangeToggleWithAlert = useCallback(
     (rangeKeys: string[], tappedStart: string, tappedEnd: string) => {
       if (!rangeKeys.length) return;
@@ -645,14 +748,8 @@ export default function HostCarDetails() {
               }
 
               setBlockedLocal(Array.from(next).sort());
-
-              // Persist the pill text + message until Clear
               setDisplayRange({ start, end });
               setCalendarNote(note);
-
-              // Clear selection highlight after confirming
-              // setRangeStart(null);
-              // setRangeEnd(null);
             },
           },
         ]
@@ -666,12 +763,10 @@ export default function HostCarDetails() {
       if (!dateString) return;
       if (isBeforeDateKey(dateString, todayKey)) return;
 
-      // First tap
       if (!rangeStart) {
         setRangeStart(dateString);
         setRangeEnd(null);
 
-        // Preview message for single-day intent (persists until clear / confirm)
         const isBlocked = blockedSet.has(dateString);
         const note = isBlocked
           ? `This date will be unblocked: ${dateString}.`
@@ -682,7 +777,6 @@ export default function HostCarDetails() {
         return;
       }
 
-      // Second tap completes the range
       if (rangeStart && !rangeEnd) {
         setRangeEnd(dateString);
 
@@ -694,7 +788,6 @@ export default function HostCarDetails() {
         return;
       }
 
-      // Start a new selection
       setRangeStart(dateString);
       setRangeEnd(null);
 
@@ -708,7 +801,6 @@ export default function HostCarDetails() {
     [rangeStart, rangeEnd, todayKey, blockedSet, applyRangeToggleWithAlert]
   );
 
-  // Quick single-day unblock (long press)
   const onDayLongPress = useCallback(
     (key: string) => {
       if (!key) return;
@@ -729,7 +821,6 @@ export default function HostCarDetails() {
             setDisplayRange({ start: key, end: key });
             setCalendarNote(`This date will be unblocked: ${key}.`);
 
-            // clear selection highlight just in case
             setRangeStart(null);
             setRangeEnd(null);
           },
@@ -748,6 +839,21 @@ export default function HostCarDetails() {
     },
     [amenitiesLocal]
   );
+
+  // ✅ “Add feature” modal list = only those not already selected
+  const availableToAdd = useMemo(() => {
+    const set = amenitiesSet;
+    return ALL_FEATURE_ITEMS.filter((f) => !set.has(f.id));
+  }, [amenitiesSet]);
+
+  const selectedFeatures = useMemo(() => {
+    // map selected ids to labels/icons (unknown ids still show id)
+    const byId = new Map(ALL_FEATURE_ITEMS.map((x) => [x.id, x] as const));
+    const ids = uniqSortedStrings(amenitiesLocal);
+    return ids.map(
+      (id) => byId.get(id) || { id, label: id, icon: "check" as any }
+    );
+  }, [amenitiesLocal]);
 
   // Calendar markings (kept)
   const markedDates = useMemo(() => {
@@ -777,7 +883,6 @@ export default function HostCarDetails() {
       };
     }
 
-    // Preview only if start selected and it's today+
     if (rangeStart && !rangeEnd && String(rangeStart) >= String(todayKey)) {
       out[rangeStart] = {
         ...(out[rangeStart] || {}),
@@ -791,6 +896,44 @@ export default function HostCarDetails() {
     return out;
   }, [blockedLocal, rangeStart, rangeEnd, todayKey]);
 
+  // ✅ Photos reorder (UI-only)
+  const photoKeyExtractor = useCallback((u: string) => u, []);
+  const renderPhotoItem = useCallback(
+    ({ item, drag, isActive }: RenderItemParams<string>) => {
+      return (
+        <Pressable
+          onLongPress={drag}
+          delayLongPress={250}
+          style={({ pressed }) => [
+            styles.dragThumbWrap,
+            (pressed || isActive) && { opacity: 0.9 },
+          ]}
+        >
+          <Image
+            source={{ uri: item }}
+            style={styles.dragThumb}
+            resizeMode="cover"
+          />
+          <View style={styles.dragHandle}>
+            <Feather name="move" size={14} color="rgba(255,255,255,0.90)" />
+          </View>
+        </Pressable>
+      );
+    },
+    []
+  );
+
+  const onDragEnd = useCallback((next: string[], from: number, to: number) => {
+    setGalleryLocal(next);
+
+    // alert when a photo becomes main (moves into index 0)
+    if (to === 0 && from !== 0) {
+      Alert.alert("Main photo", "This will be the main photo.", [
+        { text: "OK" },
+      ]);
+    }
+  }, []);
+
   if (!carId) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -800,6 +943,12 @@ export default function HostCarDetails() {
       </SafeAreaView>
     );
   }
+
+  // ✅ carousel uses galleryLocal; fallback to cover
+  const heroImages = useMemo(() => {
+    const xs = galleryLocal.length ? galleryLocal : cover ? [cover] : [];
+    return xs;
+  }, [galleryLocal, cover]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -855,49 +1004,39 @@ export default function HostCarDetails() {
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          {/* HERO */}
-          <View style={styles.heroCard}>
-            <View style={styles.heroCoverWrap}>
-              {cover ? (
-                <Image
-                  source={{ uri: cover }}
-                  style={styles.heroCover}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={styles.coverEmpty}>
-                  <Feather name="image" size={18} color="rgba(17,24,39,0.35)" />
-                  <Text style={styles.coverEmptyText}>No photo</Text>
-                </View>
-              )}
-            </View>
+          {/* ✅ BIGGER PHOTO-FIRST HERO (carousel) */}
+          <View style={styles.heroBigCard}>
+            <ImageCarousel urls={heroImages} />
 
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title} numberOfLines={2}>
-                {String(car.title || "Untitled")}
-              </Text>
+            {/* Details below images */}
+            <View style={styles.heroInfo}>
+              <View style={styles.heroTitleRow}>
+                <Text style={styles.titleBig} numberOfLines={2}>
+                  {String(car.title || "Untitled")}
+                </Text>
 
-              <View
-                style={[
-                  styles.statusPill,
-                  String(car?.status || "").toLowerCase() === "active"
-                    ? styles.statusPillActive
-                    : null,
-                ]}
-              >
-                <Text
+                <View
                   style={[
-                    styles.statusText,
+                    styles.statusPill,
                     String(car?.status || "").toLowerCase() === "active"
-                      ? styles.statusTextActive
+                      ? styles.statusPillActive
                       : null,
                   ]}
                 >
-                  {statusLabel(car.status)}
-                </Text>
+                  <Text
+                    style={[
+                      styles.statusText,
+                      String(car?.status || "").toLowerCase() === "active"
+                        ? styles.statusTextActive
+                        : null,
+                    ]}
+                  >
+                    {statusLabel(car.status)}
+                  </Text>
+                </View>
               </View>
 
-              <Text style={styles.heroMeta}>
+              <Text style={styles.heroMetaBig}>
                 {[
                   car.vehicle_type
                     ? String(car.vehicle_type).toUpperCase()
@@ -911,7 +1050,7 @@ export default function HostCarDetails() {
                   .join(" • ")}
               </Text>
 
-              <Text style={styles.heroLoc}>
+              <Text style={styles.heroLocBig}>
                 {[
                   car.area ? String(car.area) : "",
                   car.city ? String(car.city) : "",
@@ -922,7 +1061,7 @@ export default function HostCarDetails() {
               </Text>
 
               {!!car.price_per_day && (
-                <Text style={styles.heroPrice}>
+                <Text style={styles.heroPriceBig}>
                   {money(car.price_per_day, car.currency || "CAD")} / day
                 </Text>
               )}
@@ -997,7 +1136,7 @@ export default function HostCarDetails() {
             )}
           </View>
 
-          {/* AVAILABILITY */}
+          {/* AVAILABILITY (unchanged functionality) */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Availability</Text>
             <Text style={styles.note}>
@@ -1077,7 +1216,6 @@ export default function HostCarDetails() {
             <Calendar
               minDate={todayKey}
               disableAllTouchEventsForDisabledDays
-              // NOTE: markedDates is kept (no logic change), but we are using dayComponent rendering
               // markedDates={markedDates}
               dayComponent={({ date }) => {
                 const key = String(date?.dateString || "");
@@ -1086,7 +1224,6 @@ export default function HostCarDetails() {
                 const isPast = !isSameOrAfter(key, todayKey);
                 const isBlocked = blockedSet.has(key);
 
-                // ✅ show range highlight ONLY while selecting
                 const selecting =
                   !!rangeStart &&
                   (rangeEnd
@@ -1102,7 +1239,6 @@ export default function HostCarDetails() {
                   rangeEnd &&
                   rangeStart === rangeEnd;
 
-                // Rounded ends for selection highlight
                 const rangeStyle = selecting
                   ? isSingle
                     ? styles.selSingle
@@ -1134,12 +1270,10 @@ export default function HostCarDetails() {
                       pressed && !isPast ? { opacity: 0.9 } : null,
                     ]}
                   >
-                    {/* ✅ Selection highlight layer (ONLY while selecting) */}
                     {selecting ? (
                       <View style={[styles.selBg, rangeStyle]} />
                     ) : null}
 
-                    {/* ✅ Blocked diagonal strike (ONLY when NOT selecting) */}
                     {isBlocked && !selecting && !isPast ? (
                       <View style={styles.diagonalStrike} />
                     ) : null}
@@ -1175,60 +1309,171 @@ export default function HostCarDetails() {
             ) : null}
           </View>
 
-          {/* FEATURES */}
+          {/* FEATURES (add button + show actual features car has) */}
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Features</Text>
+            <View style={styles.sectionTopRow}>
+              <Text style={styles.sectionTitle}>Features</Text>
 
-            <View style={styles.pillGrid}>
-              {FEATURE_ITEMS.map((f) => {
-                const on = amenitiesSet.has(f.id);
-                return (
-                  <Pressable
-                    key={f.id}
-                    onPress={() => toggleAmenityLocal(f.id)}
-                    style={({ pressed }) => [
-                      styles.featurePill,
-                      on ? styles.featureOn : styles.featureOff,
-                      pressed && { opacity: 0.92 },
-                    ]}
-                  >
-                    <Feather
-                      name={f.icon}
-                      size={14}
-                      color={on ? "rgba(17,24,39,0.95)" : "rgba(17,24,39,0.55)"}
-                    />
-                    <Text
-                      style={[styles.featureText, on && styles.featureTextOn]}
-                    >
-                      {f.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+              <Pressable
+                onPress={() => setAddFeaturesOpen(true)}
+                style={({ pressed }) => [
+                  styles.addMiniBtn,
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
+                <Feather name="plus" size={14} color="#111827" />
+                <Text style={styles.addMiniText}>Add</Text>
+              </Pressable>
             </View>
+
+            {/* Selected features (actual car features) */}
+            {selectedFeatures.length ? (
+              <View style={styles.pillGrid}>
+                {selectedFeatures.map((f) => {
+                  const on = amenitiesSet.has(f.id);
+                  return (
+                    <Pressable
+                      key={f.id}
+                      onPress={() => toggleAmenityLocal(f.id)}
+                      style={({ pressed }) => [
+                        styles.featurePill,
+                        on ? styles.featureOn : styles.featureOff,
+                        pressed && { opacity: 0.92 },
+                      ]}
+                    >
+                      <Feather
+                        name={f.icon}
+                        size={14}
+                        color={
+                          on ? "rgba(17,24,39,0.95)" : "rgba(17,24,39,0.55)"
+                        }
+                      />
+                      <Text
+                        style={[styles.featureText, on && styles.featureTextOn]}
+                      >
+                        {f.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={[styles.note, { marginTop: 8 }]}>
+                No features selected yet. Tap “Add” to choose from the full
+                list.
+              </Text>
+            )}
           </View>
 
-          {/* PHOTOS */}
-          {!!gallery.length && (
-            <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>Photos</Text>
+          {/* ✅ Add Features Modal: only “not a part of the car” */}
+          <Modal visible={addFeaturesOpen} transparent animationType="fade">
+            <Pressable
+              style={styles.modalBackdrop}
+              onPress={() => setAddFeaturesOpen(false)}
+            />
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Add features</Text>
+                <Pressable
+                  onPress={() => setAddFeaturesOpen(false)}
+                  style={({ pressed }) => [
+                    styles.modalClose,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                >
+                  <Feather name="x" size={16} color="#111827" />
+                </Pressable>
+              </View>
+
               <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.photoRow}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 10 }}
               >
-                {gallery.map((u) => (
-                  <View key={u} style={styles.thumbWrap}>
-                    <Image
-                      source={{ uri: u }}
-                      style={styles.thumb}
-                      resizeMode="cover"
-                    />
+                {availableToAdd.length ? (
+                  <View style={styles.pillGrid}>
+                    {availableToAdd.map((f) => (
+                      <Pressable
+                        key={f.id}
+                        onPress={() => {
+                          // add only (efficient set)
+                          const next = new Set(amenitiesLocal);
+                          next.add(f.id);
+                          setAmenitiesLocal(Array.from(next).sort());
+                        }}
+                        style={({ pressed }) => [
+                          styles.featurePill,
+                          styles.featureOff,
+                          pressed && { opacity: 0.92 },
+                        ]}
+                      >
+                        <Feather
+                          name={f.icon}
+                          size={14}
+                          color="rgba(17,24,39,0.55)"
+                        />
+                        <Text style={styles.featureText}>{f.label}</Text>
+                      </Pressable>
+                    ))}
                   </View>
-                ))}
+                ) : (
+                  <Text style={styles.note}>
+                    All available features are already selected.
+                  </Text>
+                )}
               </ScrollView>
             </View>
-          )}
+          </Modal>
+
+          {/* PHOTOS (add button + drag reorder) */}
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionTopRow}>
+              <Text style={styles.sectionTitle}>Photos</Text>
+
+              <Pressable
+                onPress={() =>
+                  router.push(
+                    `/host-onboarding-photos?carId=${encodeURIComponent(
+                      car.id
+                    )}`
+                  )
+                }
+                style={({ pressed }) => [
+                  styles.addMiniBtn,
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
+                <Feather name="camera" size={14} color="#111827" />
+                <Text style={styles.addMiniText}>Add</Text>
+              </Pressable>
+            </View>
+
+            {galleryLocal.length ? (
+              <>
+                <Text style={[styles.note, { marginTop: 8 }]}>
+                  Long-press and drag to reorder. The first photo is the main
+                  photo.
+                </Text>
+
+                <View style={{ marginTop: 10 }}>
+                  <DraggableFlatList
+                    data={galleryLocal}
+                    keyExtractor={photoKeyExtractor}
+                    renderItem={renderPhotoItem}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.dragRow}
+                    onDragEnd={({ data, from, to }) =>
+                      onDragEnd(data, from, to)
+                    }
+                  />
+                </View>
+              </>
+            ) : (
+              <Text style={[styles.note, { marginTop: 8 }]}>
+                No photos yet. Tap “Add” to upload photos.
+              </Text>
+            )}
+          </View>
 
           {/* PRIMARY ACTION */}
           <View style={styles.sectionCard}>
@@ -1325,50 +1570,81 @@ const styles = StyleSheet.create({
 
   content: { paddingHorizontal: 18, paddingBottom: 24 },
 
-  heroCard: {
-    flexDirection: "row",
-    gap: 12,
+  // ✅ NEW hero
+  heroBigCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 22,
-    padding: 12,
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
+    paddingVertical: 12,
+    paddingHorizontal: 12,
   },
 
-  heroCoverWrap: {
-    width: 140,
-    height: 140,
-    borderRadius: 24,
+  carouselWrap: {
+    height: 260,
+    borderRadius: 22,
     overflow: "hidden",
     backgroundColor: "rgba(17,24,39,0.04)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
   },
 
-  heroCover: { width: "100%", height: "100%" },
+  carouselImg: { width: "100%", height: "100%" },
 
-  coverEmpty: {
+  carouselGrad: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 80,
+    backgroundColor: "rgba(0,0,0,0.08)",
+  },
+
+  carouselEmpty: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
   },
 
-  coverEmptyText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.45)",
+  dotsRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
   },
 
-  title: {
-    fontSize: 16,
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.18)",
+  },
+
+  dotOn: {
+    width: 16,
+    backgroundColor: "rgba(17,24,39,0.45)",
+  },
+
+  heroInfo: { marginTop: 12 },
+
+  heroTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  titleBig: {
+    flex: 1,
+    fontSize: 18,
     fontWeight: "900",
     color: "#111827",
-    letterSpacing: -0.1,
+    letterSpacing: -0.15,
   },
 
   statusPill: {
-    marginTop: 8,
     alignSelf: "flex-start",
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -1377,6 +1653,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
   },
+
   statusPillActive: {
     backgroundColor: "rgba(16,185,129,0.12)",
     borderColor: "rgba(16,185,129,0.30)",
@@ -1388,27 +1665,28 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.70)",
     textTransform: "capitalize",
   },
+
   statusTextActive: {
     color: "rgba(6,95,70,0.95)",
   },
 
-  heroMeta: {
+  heroMetaBig: {
     marginTop: 10,
     fontSize: 12,
     fontWeight: "800",
     color: "rgba(17,24,39,0.55)",
   },
 
-  heroLoc: {
+  heroLocBig: {
     marginTop: 4,
     fontSize: 12,
     fontWeight: "800",
     color: "rgba(17,24,39,0.45)",
   },
 
-  heroPrice: {
+  heroPriceBig: {
     marginTop: 12,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "900",
     color: "rgba(17,24,39,0.92)",
   },
@@ -1420,6 +1698,31 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
+  },
+
+  sectionTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  addMiniBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+
+  addMiniText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#111827",
   },
 
   sectionTitle: {
@@ -1488,6 +1791,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
+
   rangePill: {
     flex: 1,
     flexDirection: "row",
@@ -1500,11 +1804,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
   },
+
   rangeText: {
     fontSize: 12,
     fontWeight: "900",
     color: "rgba(17,24,39,0.75)",
   },
+
   clearBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -1513,6 +1819,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(239,68,68,0.20)",
   },
+
   clearText: { fontSize: 12, fontWeight: "900", color: "#991B1B" },
 
   pillGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 12 },
@@ -1526,35 +1833,54 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
   },
+
   featureOn: {
     backgroundColor: "rgba(59,130,246,0.10)",
     borderColor: "rgba(59,130,246,0.22)",
   },
+
   featureOff: {
     backgroundColor: "rgba(17,24,39,0.03)",
     borderColor: "rgba(17,24,39,0.10)",
   },
+
   featureText: {
     fontSize: 12,
     fontWeight: "900",
     color: "rgba(17,24,39,0.70)",
   },
+
   featureTextOn: {
     color: "rgba(17,24,39,0.92)",
   },
 
-  photoRow: { paddingTop: 10, gap: 10 },
+  // Photos drag row
+  dragRow: { paddingVertical: 6, gap: 10 },
 
-  thumbWrap: {
-    width: 110,
-    height: 110,
-    borderRadius: 18,
+  dragThumbWrap: {
+    width: 132,
+    height: 132,
+    borderRadius: 20,
     overflow: "hidden",
     backgroundColor: "rgba(17,24,39,0.04)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
+    marginRight: 10,
   },
-  thumb: { width: "100%", height: "100%" },
+
+  dragThumb: { width: "100%", height: "100%" },
+
+  dragHandle: {
+    position: "absolute",
+    right: 10,
+    bottom: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   actionHeaderRow: {
     flexDirection: "row",
@@ -1571,6 +1897,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(239,68,68,0.20)",
   },
+
   dirtyText: {
     fontSize: 12,
     fontWeight: "900",
@@ -1589,6 +1916,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
   },
+
   primaryText: { fontSize: 14, fontWeight: "900", color: "#111827" },
 
   odoDisplayRow: {
@@ -1627,6 +1955,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "rgba(17,24,39,0.40)",
   },
+
   odoValue: {
     fontSize: 14,
     fontWeight: "900",
@@ -1638,6 +1967,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "rgba(17,24,39,0.75)",
   },
+
   rangeArrow: {
     fontSize: 14,
     fontWeight: "900",
@@ -1678,7 +2008,6 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  // ----- selection highlight (ONLY while picking start/end) -----
   selBg: {
     position: "absolute",
     height: 34,
@@ -1688,9 +2017,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17,24,39,0.22)",
   },
 
-  selMid: {
-    borderRadius: 0,
-  },
+  selMid: { borderRadius: 0 },
 
   selStart: {
     left: 6,
@@ -1708,5 +2035,59 @@ const styles = StyleSheet.create({
     left: 6,
     right: 6,
     borderRadius: 999,
+  },
+
+  // Modal
+  modalBackdrop: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.25)",
+  },
+
+  modalCard: {
+    marginTop: 90,
+    marginHorizontal: 18,
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.06)",
+    padding: 12,
+    maxHeight: "70%",
+  },
+
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(17,24,39,0.06)",
+  },
+
+  modalTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  modalClose: {
+    width: 38,
+    height: 38,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+
+  coverEmptyText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.45)",
   },
 });
