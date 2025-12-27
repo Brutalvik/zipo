@@ -161,6 +161,19 @@ function KeyValueRow({
   );
 }
 
+function isSameOrAfter(a: string, b: string) {
+  return String(a) >= String(b);
+}
+
+function isInRange(key: string, start: string, end: string) {
+  const a = String(start);
+  const b = String(end);
+  const k = String(key);
+  const lo = a <= b ? a : b;
+  const hi = a <= b ? b : a;
+  return k >= lo && k <= hi;
+}
+
 /** --------- Features catalog (icons + ids) --------- */
 const FEATURE_ITEMS: Array<{
   id: string;
@@ -192,7 +205,7 @@ function parseDateKey(key: string) {
 }
 
 function isBeforeDateKey(a: string, b: string) {
-  return parseDateKey(a).getTime() < parseDateKey(b).getTime();
+  return String(a) < String(b);
 }
 
 function dateRangeKeys(startKey: string, endKey: string) {
@@ -311,7 +324,7 @@ export default function HostCarDetails() {
         Array.isArray(c?.requirements?.availability?.blockedDates)
           ? c!.requirements.availability.blockedDates
           : []
-      );
+      ).filter((k) => !isBeforeDateKey(k, todayKey));
 
       setOdoText(odo ? String(odo) : "");
       setAmenitiesLocal(amenities);
@@ -614,13 +627,15 @@ export default function HostCarDetails() {
   );
 
   // Calendar markings:
-  // - ONLY show blockedLocal as a proper period range (no extra “selected list” below)
-  // - ensure rounded ends by setting startingDay/endingDay flags for contiguous dates
   const markedDates = useMemo(() => {
     const out: Record<string, any> = {};
-    const set = new Set(blockedLocal);
+    const visibleBlocked = blockedLocal
+      .filter((k) => String(k) >= String(todayKey))
+      .sort();
 
-    for (const k of blockedLocal) {
+    const set = new Set(visibleBlocked);
+
+    for (const k of visibleBlocked) {
       const d = parseDateKey(k);
       const prev = toDateKey(
         new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1)
@@ -628,6 +643,7 @@ export default function HostCarDetails() {
       const next = toDateKey(
         new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)
       );
+
       const hasPrev = set.has(prev);
       const hasNext = set.has(next);
 
@@ -639,8 +655,8 @@ export default function HostCarDetails() {
       };
     }
 
-    // OPTIONAL: if user tapped a start date (but not end yet) give a subtle single-day preview
-    if (rangeStart && !rangeEnd && !isBeforeDateKey(rangeStart, todayKey)) {
+    // ✅ Preview only if start selected and it's today+
+    if (rangeStart && !rangeEnd && String(rangeStart) >= String(todayKey)) {
       out[rangeStart] = {
         ...(out[rangeStart] || {}),
         startingDay: true,
@@ -907,15 +923,90 @@ export default function HostCarDetails() {
 
             <Calendar
               minDate={todayKey}
-              markingType="period"
-              markedDates={markedDates}
-              onDayPress={(day) => onDayPress(String(day?.dateString || ""))}
+              disableAllTouchEventsForDisabledDays
+              dayComponent={({ date }) => {
+                const key = String(date?.dateString || "");
+                if (!key) return null;
+
+                const isPast = !isSameOrAfter(key, todayKey);
+                const isBlocked = blockedLocal.includes(key);
+
+                // ✅ show range highlight ONLY while selecting
+                const selecting =
+                  !!rangeStart &&
+                  (rangeEnd
+                    ? isInRange(key, rangeStart, rangeEnd)
+                    : key === rangeStart);
+
+                const isStart = selecting && rangeStart && key === rangeStart;
+                const isEnd = selecting && rangeEnd && key === rangeEnd;
+
+                const isSingle =
+                  selecting &&
+                  rangeStart &&
+                  rangeEnd &&
+                  rangeStart === rangeEnd;
+
+                // Rounded ends for selection highlight
+                const rangeStyle = selecting
+                  ? isSingle
+                    ? styles.selSingle
+                    : isStart
+                    ? styles.selStart
+                    : isEnd
+                    ? styles.selEnd
+                    : styles.selMid
+                  : null;
+
+                const onPress = () => {
+                  // Past dates never selectable
+                  if (isPast) return;
+                  onDayPress(key);
+                };
+
+                return (
+                  <Pressable
+                    onPress={onPress}
+                    disabled={isPast}
+                    style={({ pressed }) => [
+                      styles.dayCell,
+                      pressed && !isPast ? { opacity: 0.9 } : null,
+                    ]}
+                  >
+                    {/* ✅ Selection highlight layer (ONLY while selecting) */}
+                    {selecting ? (
+                      <View style={[styles.selBg, rangeStyle]} />
+                    ) : null}
+
+                    {/* ✅ Blocked diagonal strike (ONLY when NOT selecting) */}
+                    {isBlocked && !selecting && !isPast ? (
+                      <View style={styles.diagonalStrike} />
+                    ) : null}
+
+                    {/* Date text */}
+                    <Text
+                      style={[
+                        styles.dayText,
+                        isPast ? styles.dayTextDisabled : null,
+
+                        // ✅ blocked dates = subtle red + bold (NO background)
+                        isBlocked && !selecting ? styles.dayTextBlocked : null,
+
+                        // if selecting, keep text readable
+                        selecting ? styles.dayTextOnSelection : null,
+                      ]}
+                    >
+                      {date?.day}
+                    </Text>
+                  </Pressable>
+                );
+              }}
               theme={{
-                textDayFontWeight: "800",
                 textMonthFontWeight: "900",
                 textDayHeaderFontWeight: "900",
                 arrowColor: "rgba(17,24,39,0.65)",
                 todayTextColor: "#111827",
+                textDisabledColor: "rgba(17,24,39,0.25)",
               }}
             />
           </View>
@@ -1393,5 +1484,70 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "900",
     color: "rgba(48, 206, 69, 1)",
+  },
+  dayCell: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  dayText: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  dayTextDisabled: {
+    color: "rgba(17,24,39,0.22)",
+  },
+
+  dayTextBlocked: {
+    color: "rgba(185, 28, 28, 0.75)",
+    fontWeight: "900",
+  },
+
+  diagonalStrike: {
+    position: "absolute",
+    width: 21,
+    height: 2,
+    backgroundColor: "rgba(185, 28, 28, 0.85)",
+    transform: [{ rotate: "-45deg" }],
+  },
+
+  dayTextOnSelection: {
+    color: "#111827",
+  },
+
+  // ----- selection highlight (ONLY while picking start/end) -----
+  selBg: {
+    position: "absolute",
+    height: 34,
+    left: 0,
+    right: 0,
+    borderRadius: 0,
+    backgroundColor: "rgba(17,24,39,0.22)",
+  },
+
+  selMid: {
+    borderRadius: 0,
+  },
+
+  selStart: {
+    left: 6,
+    borderTopLeftRadius: 999,
+    borderBottomLeftRadius: 999,
+  },
+
+  selEnd: {
+    right: 6,
+    borderTopRightRadius: 999,
+    borderBottomRightRadius: 999,
+  },
+
+  selSingle: {
+    left: 6,
+    right: 6,
+    borderRadius: 999,
   },
 });
