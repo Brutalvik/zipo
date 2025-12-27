@@ -23,6 +23,7 @@ import { useRouter } from "expo-router";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import { fetchHostMe } from "@/redux/thunks/hostThunk";
 import { auth } from "@/services/firebase";
+import { normStatus } from "@/app/(hosttabs)/helpers";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -86,15 +87,6 @@ function getGalleryUrls(car: HostCar): string[] {
   }
 
   return Array.from(new Set(urls));
-}
-
-function normStatus(s: any): "active" | "draft" | "other" {
-  const v = String(s || "")
-    .toLowerCase()
-    .trim();
-  if (v === "active") return "active";
-  if (v === "draft") return "draft";
-  return "other";
 }
 
 function parseDateMs(v?: string | null) {
@@ -317,7 +309,7 @@ function CarMiniRow({
 }: {
   car: HostCar;
   derived: {
-    status: "active" | "draft" | "other";
+    status: "active" | "inactive" | "draft" | "other";
     updatedRel: string;
     completionPct: number;
     photoCount: number;
@@ -329,9 +321,21 @@ function CarMiniRow({
   const s = derived.status;
 
   const statusTone =
-    s === "active" ? "green" : s === "draft" ? "amber" : "muted";
+    s === "active"
+      ? "green"
+      : s === "draft"
+      ? "amber"
+      : s === "inactive"
+      ? "red"
+      : "muted";
   const statusLabel =
-    s === "active" ? "Active" : s === "draft" ? "Draft" : "Other";
+    s === "active"
+      ? "Active"
+      : s === "draft"
+      ? "Draft"
+      : s === "inactive"
+      ? "Inactive"
+      : "Other";
 
   const missingShort =
     derived.missing.length === 0
@@ -491,6 +495,7 @@ export default function HostHubScreen() {
     let incompleteListings = 0;
 
     // Car snapshot (top by updated)
+
     const enriched = cars.map((c) => {
       const urls = getGalleryUrls(c);
       const photoCount = urls.length;
@@ -505,7 +510,7 @@ export default function HostHubScreen() {
       if (photoCount === 0) missingPhotos++;
       if (Number(c.price_per_day || 0) <= 0) missingPrice++;
       if (completion.pct < 90) incompleteListings++;
-
+      console.log("DERIVING HUB FROM CARS", st);
       return {
         car: c,
         status: st,

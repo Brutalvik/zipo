@@ -318,13 +318,16 @@ export default function NearbyScreen() {
       }
 
       const bb = bboxFromRadiusKm(lat, lng, rKm);
+
       const url =
         `${API_BASE}/api/cars/map` +
         `?minLat=${encodeURIComponent(bb.minLat)}` +
         `&maxLat=${encodeURIComponent(bb.maxLat)}` +
         `&minLng=${encodeURIComponent(bb.minLng)}` +
         `&maxLng=${encodeURIComponent(bb.maxLng)}` +
-        `&status=draft` +
+        `&lat=${encodeURIComponent(lat)}` +
+        `&lng=${encodeURIComponent(lng)}` +
+        `&radiusKm=${encodeURIComponent(rKm)}` +
         `&limit=500`;
 
       setIsLoading(true);

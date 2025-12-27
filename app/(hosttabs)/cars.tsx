@@ -22,6 +22,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Swipeable } from "react-native-gesture-handler";
 import { auth } from "@/services/firebase";
+import { normStatus } from "@/app/(hosttabs)/helpers";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -44,12 +45,9 @@ type HostCar = {
   image_path?: string | null;
   image_gallery?: any[] | string[] | null;
   updated_at?: string | null;
-
-  // Future: if you add availability info to list API, we’ll wire it.
-  // requirements?: any;
 };
 
-type StatusFilter = "all" | "active" | "draft";
+type StatusFilter = "all" | "active" | "draft" | "inactive";
 type SortKey = "updated" | "price" | "status" | "city";
 
 async function getIdToken() {
@@ -109,15 +107,6 @@ function statusLabel(s: any) {
   return v.replace(/_/g, " ");
 }
 
-function normStatus(s: any): "active" | "draft" | "other" {
-  const v = String(s || "")
-    .toLowerCase()
-    .trim();
-  if (v === "active") return "active";
-  if (v === "draft") return "draft";
-  return "other";
-}
-
 function parseDateMs(v?: string | null) {
   const s = String(v || "").trim();
   if (!s) return 0;
@@ -144,8 +133,6 @@ function relativeTimeFromNow(ms: number) {
 }
 
 function computeCompletion(car: HostCar, photoCount: number) {
-  // Keep it simple + deterministic.
-  // We score based on fields that strongly affect “publish readiness”.
   const checks: Array<{ ok: boolean; missing: string }> = [
     { ok: !!String(car.title || "").trim(), missing: "title" },
     { ok: !!String(car.vehicle_type || "").trim(), missing: "vehicle type" },
@@ -214,8 +201,8 @@ function CarCover({ url, photoCount }: { url: string; photoCount: number }) {
               });
             }}
           />
-          {/* subtle bottom overlay to feel less flat */}
-          <View style={styles.coverOverlayBottom} />
+          <View style={styles.coverGradientTop} />
+          <View style={styles.coverGradientBottom} />
         </>
       ) : (
         <View style={styles.coverEmpty}>
@@ -224,9 +211,8 @@ function CarCover({ url, photoCount }: { url: string; photoCount: number }) {
         </View>
       )}
 
-      {/* photo count badge */}
       <View style={styles.photoCountBadge}>
-        <Feather name="camera" size={12} color="rgba(17,24,39,0.85)" />
+        <Feather name="camera" size={12} color="rgba(17,24,39,0.90)" />
         <Text style={styles.photoCountText}>{photoCount}</Text>
       </View>
     </View>
@@ -278,12 +264,13 @@ function CarCard({
   onAvailability,
   onPreview,
   onDelete,
+  onActivate,
 }: {
   car: HostCar;
   derived: {
     coverUrl: string;
     photoCount: number;
-    statusNorm: "active" | "draft" | "other";
+    statusNorm: "active" | "draft" | "inactive" | "other";
     updatedMs: number;
     updatedRel: string;
     completionPct: number;
@@ -297,6 +284,7 @@ function CarCard({
   onAvailability: (car: HostCar) => void;
   onPreview: (car: HostCar) => void;
   onDelete: (car: HostCar) => void;
+  onActivate: (car: HostCar) => void;
 }) {
   const title = String(car?.title || "Untitled");
   const statusText = statusLabel(car?.status);
@@ -306,6 +294,8 @@ function CarCard({
       ? styles.statusPillActive
       : derived.statusNorm === "draft"
       ? styles.statusPillDraft
+      : derived.statusNorm === "inactive"
+      ? styles.statusPillInactive
       : styles.statusPillNeutral;
 
   const statusTextStyle =
@@ -313,9 +303,10 @@ function CarCard({
       ? styles.statusTextActive
       : derived.statusNorm === "draft"
       ? styles.statusTextDraft
+      : derived.statusNorm === "inactive"
+      ? styles.statusTextInactive
       : styles.statusText;
 
-  // Swipe actions
   const renderLeftActions = () => (
     <View style={styles.swipeLeftWrap}>
       <SwipeActionPill
@@ -338,7 +329,7 @@ function CarCard({
     </View>
   );
 
-  const availabilityLabel = "Availability: Not set"; // placeholder until list API includes it
+  const availabilityLabel = "Availability: Not set";
 
   const missingShort =
     derived.missing.length === 0
@@ -355,12 +346,17 @@ function CarCard({
     >
       <Pressable
         onPress={() => onPress(car)}
-        style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
+        style={({ pressed }) => [
+          styles.card,
+          pressed && { transform: [{ scale: 0.995 }], opacity: 0.97 },
+        ]}
         accessibilityRole="button"
       >
+        {/* BIG image on top */}
         <CarCover url={derived.coverUrl} photoCount={derived.photoCount} />
 
-        <View style={{ flex: 1 }}>
+        {/* Details below */}
+        <View style={styles.cardBody}>
           <View style={styles.titleRow}>
             <Text style={styles.title} numberOfLines={2}>
               {title}
@@ -373,7 +369,6 @@ function CarCard({
             </View>
           </View>
 
-          {/* badges row */}
           <View style={styles.badgesRow}>
             {derived.metaBadges.map((b) => (
               <Badge key={b} label={b} />
@@ -386,7 +381,6 @@ function CarCard({
             </Text>
           )}
 
-          {/* usefulness indicators */}
           <View style={styles.infoRow}>
             <Badge
               label={`Complete ${derived.completionPct}%`}
@@ -420,7 +414,6 @@ function CarCard({
             </View>
           </View>
 
-          {/* quick actions */}
           <View style={styles.quickActionsRow}>
             <Pressable
               onPress={() => onEdit(car)}
@@ -429,7 +422,7 @@ function CarCard({
                 pressed && { opacity: 0.9 },
               ]}
             >
-              <Feather name="edit-2" size={14} color="rgba(17,24,39,0.85)" />
+              <Feather name="edit-2" size={14} color="rgba(17,24,39,0.90)" />
               <Text style={styles.qActionText}>Edit</Text>
             </Pressable>
 
@@ -440,7 +433,7 @@ function CarCard({
                 pressed && { opacity: 0.9 },
               ]}
             >
-              <Feather name="calendar" size={14} color="rgba(17,24,39,0.85)" />
+              <Feather name="calendar" size={14} color="rgba(17,24,39,0.90)" />
               <Text style={styles.qActionText}>Availability</Text>
             </Pressable>
 
@@ -451,9 +444,26 @@ function CarCard({
                 pressed && { opacity: 0.9 },
               ]}
             >
-              <Feather name="eye" size={14} color="rgba(17,24,39,0.85)" />
+              <Feather name="eye" size={14} color="rgba(17,24,39,0.90)" />
               <Text style={styles.qActionText}>Preview</Text>
             </Pressable>
+
+            {/* ✅ New: show relist/reactivate only when inactive */}
+            {derived.statusNorm === "inactive" ? (
+              <Pressable
+                onPress={() => onActivate(car)}
+                style={({ pressed }) => [
+                  styles.qActionBtn,
+                  styles.qActionBtnPrimary,
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
+                <Feather name="refresh-ccw" size={14} color="#FFFFFF" />
+                <Text style={[styles.qActionText, styles.qActionTextPrimary]}>
+                  Relist
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </Pressable>
@@ -465,11 +475,11 @@ function SkeletonCard() {
   return (
     <View style={styles.card}>
       <View style={[styles.coverWrap, styles.skelBlock]} />
-      <View style={{ flex: 1 }}>
+      <View style={styles.cardBody}>
         <View style={[styles.skelLine, { width: "70%" }]} />
-        <View style={[styles.skelLine, { width: "50%", marginTop: 8 }]} />
-        <View style={[styles.skelLine, { width: "85%", marginTop: 10 }]} />
-        <View style={[styles.skelLine, { width: "40%", marginTop: 10 }]} />
+        <View style={[styles.skelLine, { width: "55%", marginTop: 10 }]} />
+        <View style={[styles.skelLine, { width: "85%", marginTop: 12 }]} />
+        <View style={[styles.skelLine, { width: "40%", marginTop: 12 }]} />
       </View>
     </View>
   );
@@ -487,12 +497,10 @@ export default function HostCars() {
 
   const limit = 20;
 
-  // pagination safety (efficient + avoids stale closures)
   const offsetRef = useRef(0);
   const totalRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
 
-  // UI state
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("updated");
@@ -506,7 +514,6 @@ export default function HostCars() {
   const mergeUniqueById = useCallback((prev: HostCar[], next: HostCar[]) => {
     const seen = new Set(prev.map((x) => String(x.id)));
     const merged = [...prev];
-
     for (const c of next) {
       const id = String(c?.id || "");
       if (id && !seen.has(id)) {
@@ -520,7 +527,6 @@ export default function HostCars() {
   const fetchPage = useCallback(
     async (opts: { reset?: boolean } = {}) => {
       const reset = !!opts.reset;
-
       if (fetchingRef.current) return;
       fetchingRef.current = true;
 
@@ -545,6 +551,8 @@ export default function HostCars() {
         const json = JSON.parse(text);
         const listRaw = Array.isArray(json?.items) ? json.items : [];
         const list: HostCar[] = listRaw.filter(Boolean);
+
+        console.log("FETCHED CARS PAGE", list);
 
         const pageTotal =
           typeof json?.page?.total === "number"
@@ -582,7 +590,6 @@ export default function HostCars() {
     });
   }, [fetchPage]);
 
-  // auto refresh when coming back from delete
   useEffect(() => {
     if (refresh === "1") {
       fetchPage({ reset: true }).catch((e) =>
@@ -630,7 +637,6 @@ export default function HostCars() {
 
   const onAvailabilityCar = useCallback(
     (car: HostCar) => {
-      // same screen for now; you can read this param and scroll to Availability later
       router.push({
         pathname: "/(app)/host-car-details",
         params: { carId: car.id, focus: "availability" },
@@ -641,7 +647,6 @@ export default function HostCars() {
 
   const onPreviewCar = useCallback(
     (car: HostCar) => {
-      // placeholder route; adjust to your guest listing preview route when you have it
       router.push({
         pathname: "/(app)/host-car-details",
         params: { carId: car.id, focus: "preview" },
@@ -674,7 +679,6 @@ export default function HostCars() {
                 const text = await res.text();
                 if (!res.ok) throw new Error(text || "Failed to delete car");
 
-                // refresh list
                 fetchPage({ reset: true }).catch((e) =>
                   console.warn("refresh-after-delete failed", e?.message || e)
                 );
@@ -692,36 +696,62 @@ export default function HostCars() {
     [fetchPage]
   );
 
+  // ✅ New: Activate (Relist) endpoint
+  const activateCar = useCallback(
+    (car: HostCar) => {
+      Alert.alert("Relist car?", "This will set your car back to Active.", [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Relist",
+          onPress: async () => {
+            try {
+              const token = await getIdToken();
+              const res = await fetch(
+                `${API_BASE}/api/host/cars/${encodeURIComponent(
+                  car.id
+                )}/activate`,
+                {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${token}` },
+                }
+              );
+
+              const text = await res.text();
+              if (!res.ok) throw new Error(text || "Failed to relist car");
+
+              fetchPage({ reset: true }).catch((e) =>
+                console.warn("refresh-after-activate failed", e?.message || e)
+              );
+            } catch (e: any) {
+              Alert.alert(
+                "Relist failed",
+                e?.message || "Could not relist this car."
+              );
+            }
+          },
+        },
+      ]);
+    },
+    [fetchPage]
+  );
+
   const openSortPicker = useCallback(() => {
     Alert.alert("Sort", "Choose a sort order:", [
-      {
-        text: "Recently updated",
-        onPress: () => setSortKey("updated"),
-      },
-      {
-        text: "Price",
-        onPress: () => setSortKey("price"),
-      },
-      {
-        text: "Status",
-        onPress: () => setSortKey("status"),
-      },
-      {
-        text: "City",
-        onPress: () => setSortKey("city"),
-      },
+      { text: "Recently updated", onPress: () => setSortKey("updated") },
+      { text: "Price", onPress: () => setSortKey("price") },
+      { text: "Status", onPress: () => setSortKey("status") },
+      { text: "City", onPress: () => setSortKey("city") },
       { text: "Cancel", style: "cancel" },
     ]);
   }, []);
 
-  // Precompute derived fields once per items update (efficient)
   const derivedById = useMemo(() => {
     const out = new Map<
       string,
       {
         coverUrl: string;
         photoCount: number;
-        statusNorm: "active" | "draft" | "other";
+        statusNorm: "active" | "draft" | "inactive" | "other";
         updatedMs: number;
         updatedRel: string;
         completionPct: number;
@@ -738,7 +768,6 @@ export default function HostCars() {
       const photoCount = urls.length;
 
       const statusNorm = normStatus(car.status);
-
       const updatedMs = parseDateMs(car.updated_at);
       const updatedRel = relativeTimeFromNow(updatedMs);
 
@@ -774,22 +803,21 @@ export default function HostCars() {
     return out;
   }, [items]);
 
-  // Summary counts
   const summary = useMemo(() => {
     let active = 0;
     let draft = 0;
+    let inactive = 0;
     for (const c of items) {
       const s = normStatus(c.status);
       if (s === "active") active++;
       else if (s === "draft") draft++;
+      else if (s === "inactive") inactive++;
     }
-    return { total: items.length, active, draft };
+    return { total: items.length, active, draft, inactive };
   }, [items]);
 
-  // Filter + sort (local, efficient)
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-
     let list = items;
 
     if (statusFilter !== "all") {
@@ -811,7 +839,6 @@ export default function HostCars() {
       });
     }
 
-    // stable sort with tie-breaker by id
     const sorted = [...list].sort((a, b) => {
       const da = derivedById.get(String(a.id));
       const db = derivedById.get(String(b.id));
@@ -827,9 +854,8 @@ export default function HostCars() {
       } else if (sortKey === "status") {
         const sa = normStatus(a.status);
         const sb = normStatus(b.status);
-        // active first, then draft, then other
         const rank = (s: string) =>
-          s === "active" ? 0 : s === "draft" ? 1 : 2;
+          s === "active" ? 0 : s === "draft" ? 1 : s === "inactive" ? 2 : 3;
         const ra = rank(sa);
         const rb = rank(sb);
         if (ra !== rb) return ra - rb;
@@ -852,9 +878,6 @@ export default function HostCars() {
       <View style={styles.empty}>
         <Feather name="truck" size={22} color="rgba(17,24,39,0.35)" />
         <Text style={styles.emptyTitle}>No cars yet</Text>
-        <Text style={styles.emptySub}>
-          Create your first car in onboarding, then it will appear here.
-        </Text>
 
         <View style={{ height: 14 }} />
 
@@ -867,22 +890,6 @@ export default function HostCars() {
         >
           <Feather name="plus" size={16} color="#111827" />
           <Text style={styles.emptyPrimaryText}>Create a car</Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() =>
-            Alert.alert(
-              "Checklist",
-              "To publish faster: add photos, set price, and set availability."
-            )
-          }
-          style={({ pressed }) => [
-            styles.emptySecondaryBtn,
-            pressed && { opacity: 0.9 },
-          ]}
-        >
-          <Feather name="check-square" size={16} color="rgba(17,24,39,0.75)" />
-          <Text style={styles.emptySecondaryText}>Learn what you need</Text>
         </Pressable>
       </View>
     );
@@ -909,6 +916,7 @@ export default function HostCars() {
 
         <Text style={styles.summaryText}>
           {summary.total} cars • {summary.active} Active • {summary.draft} Draft
+          • {summary.inactive} Inactive
         </Text>
 
         <View style={styles.controlsRow}>
@@ -955,30 +963,40 @@ export default function HostCars() {
           </Pressable>
         </View>
 
-        {/* segmented filter */}
         <View style={styles.segmentRow}>
-          {(["all", "active", "draft"] as StatusFilter[]).map((k) => {
-            const on = statusFilter === k;
-            const label =
-              k === "all" ? "All" : k === "active" ? "Active" : "Draft";
-            return (
-              <Pressable
-                key={k}
-                onPress={() => setStatusFilter(k)}
-                style={({ pressed }) => [
-                  styles.segmentPill,
-                  on ? styles.segmentPillOn : styles.segmentPillOff,
-                  pressed && { opacity: 0.92 },
-                ]}
-              >
-                <Text
-                  style={[styles.segmentText, on ? styles.segmentTextOn : null]}
+          {(["all", "active", "draft", "inactive"] as StatusFilter[]).map(
+            (k) => {
+              const on = statusFilter === k;
+              const label =
+                k === "all"
+                  ? "All"
+                  : k === "active"
+                  ? "Active"
+                  : k === "draft"
+                  ? "Draft"
+                  : "Inactive";
+              return (
+                <Pressable
+                  key={k}
+                  onPress={() => setStatusFilter(k)}
+                  style={({ pressed }) => [
+                    styles.segmentPill,
+                    on ? styles.segmentPillOn : styles.segmentPillOff,
+                    pressed && { opacity: 0.92 },
+                  ]}
                 >
-                  {label}
-                </Text>
-              </Pressable>
-            );
-          })}
+                  <Text
+                    style={[
+                      styles.segmentText,
+                      on ? styles.segmentTextOn : null,
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              );
+            }
+          )}
         </View>
 
         <Text style={styles.sectionLabel}>Your listings</Text>
@@ -1015,6 +1033,7 @@ export default function HostCars() {
                   onAvailability={onAvailabilityCar}
                   onPreview={onPreviewCar}
                   onDelete={deleteCar}
+                  onActivate={activateCar}
                 />
               );
             }}
@@ -1044,7 +1063,6 @@ export default function HostCars() {
             updateCellsBatchingPeriod={50}
           />
 
-          {/* optional floating add button */}
           <Pressable
             onPress={() => router.push("/host-onboarding-car")}
             style={({ pressed }) => [styles.fab, pressed && { opacity: 0.92 }]}
@@ -1061,7 +1079,6 @@ export default function HostCars() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F6F7FB" },
-
   listWrap: { flex: 1 },
 
   stickyHeader: {
@@ -1209,40 +1226,50 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 18,
     paddingTop: 12,
-    paddingBottom: 120, // extra so cards never touch the tab bar
+    paddingBottom: 120,
   },
 
+  // ✅ PREMIUM CARD (vertical)
   card: {
-    flexDirection: "row",
-    gap: 12,
     backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 12,
+    borderRadius: 26,
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
-    marginBottom: 12,
+    marginBottom: 14,
+    overflow: "hidden",
   },
 
-  // cover larger + premium
+  cardBody: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
+  },
+
+  // ✅ BIG IMAGE
   coverWrap: {
-    width: 104,
-    height: 104,
-    borderRadius: 22,
-    overflow: "hidden",
+    width: "100%",
+    height: 170,
     backgroundColor: "rgba(17,24,39,0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.06)",
   },
 
   cover: { width: "100%", height: "100%" },
 
-  coverOverlayBottom: {
+  coverGradientTop: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 54,
+    backgroundColor: "rgba(17,24,39,0.08)",
+  },
+
+  coverGradientBottom: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    height: 44,
-    backgroundColor: "rgba(17,24,39,0.06)",
+    height: 64,
+    backgroundColor: "rgba(17,24,39,0.10)",
   },
 
   coverEmpty: {
@@ -1260,15 +1287,15 @@ const styles = StyleSheet.create({
 
   photoCountBadge: {
     position: "absolute",
-    left: 8,
-    top: 8,
+    left: 12,
+    top: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.90)",
+    backgroundColor: "rgba(255,255,255,0.92)",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
   },
@@ -1279,10 +1306,10 @@ const styles = StyleSheet.create({
 
   title: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "900",
     color: "#111827",
-    letterSpacing: -0.1,
+    letterSpacing: -0.2,
   },
 
   statusPill: {
@@ -1307,6 +1334,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(245,158,11,0.30)",
   },
 
+  statusPillInactive: {
+    backgroundColor: "rgba(209, 125, 125, 0.26)",
+    borderColor: "rgba(56, 2, 2, 0.26)",
+  },
+
   statusText: {
     fontSize: 11,
     fontWeight: "900",
@@ -1314,16 +1346,12 @@ const styles = StyleSheet.create({
     textTransform: "capitalize",
   },
 
-  statusTextActive: {
-    color: "rgba(6,95,70,0.95)",
-  },
-
-  statusTextDraft: {
-    color: "rgba(146,64,14,0.95)",
-  },
+  statusTextActive: { color: "rgba(6,95,70,0.95)" },
+  statusTextDraft: { color: "rgba(146,64,14,0.95)" },
+  statusTextInactive: { color: "rgba(160, 50, 50, 0.95)" },
 
   badgesRow: {
-    marginTop: 8,
+    marginTop: 10,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
@@ -1362,44 +1390,39 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.75)",
   },
 
-  badgeTextGreen: {
-    color: "rgba(6,95,70,0.95)",
-  },
-
-  badgeTextAmber: {
-    color: "rgba(146,64,14,0.95)",
-  },
+  badgeTextGreen: { color: "rgba(6,95,70,0.95)" },
+  badgeTextAmber: { color: "rgba(146,64,14,0.95)" },
 
   loc: {
-    marginTop: 8,
+    marginTop: 10,
     fontSize: 12,
     fontWeight: "800",
     color: "rgba(17,24,39,0.45)",
   },
 
   infoRow: {
-    marginTop: 8,
+    marginTop: 10,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
 
   missingText: {
-    marginTop: 6,
+    marginTop: 8,
     fontSize: 11,
     fontWeight: "900",
     color: "rgba(185, 28, 28, 0.70)",
   },
 
   bottomRow: {
-    marginTop: 10,
+    marginTop: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
   },
 
-  price: { fontSize: 13, fontWeight: "900", color: "rgba(17,24,39,0.90)" },
+  price: { fontSize: 14, fontWeight: "900", color: "rgba(17,24,39,0.92)" },
 
   rightMeta: {
     flexDirection: "row",
@@ -1414,15 +1437,17 @@ const styles = StyleSheet.create({
   },
 
   quickActionsRow: {
-    marginTop: 10,
+    marginTop: 12,
     flexDirection: "row",
     gap: 10,
+    flexWrap: "wrap",
   },
 
   qActionBtn: {
     flex: 1,
-    height: 40,
-    borderRadius: 14,
+    minWidth: 110,
+    height: 42,
+    borderRadius: 16,
     backgroundColor: "rgba(17,24,39,0.05)",
     borderWidth: 1,
     borderColor: "rgba(17,24,39,0.10)",
@@ -1432,10 +1457,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
+  // ✅ primary relist button style
+  qActionBtnPrimary: {
+    backgroundColor: "#111827",
+    borderColor: "rgba(17,24,39,0.20)",
+  },
+
   qActionText: {
     fontSize: 12,
     fontWeight: "900",
-    color: "rgba(17,24,39,0.85)",
+    color: "rgba(17,24,39,0.90)",
+  },
+
+  qActionTextPrimary: {
+    color: "#FFFFFF",
   },
 
   // swipe areas
@@ -1494,7 +1529,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17,24,39,0.06)",
   },
 
-  // empty state
+  // empty
   empty: {
     paddingTop: 50,
     paddingBottom: 30,
@@ -1528,26 +1563,6 @@ const styles = StyleSheet.create({
 
   emptyPrimaryText: { fontSize: 13, fontWeight: "900", color: "#111827" },
 
-  emptySecondaryBtn: {
-    marginTop: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    height: 46,
-    borderRadius: 999,
-    backgroundColor: "rgba(17,24,39,0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(17,24,39,0.10)",
-  },
-
-  emptySecondaryText: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: "rgba(17,24,39,0.75)",
-  },
-
-  // floating add button (subtle)
   fab: {
     position: "absolute",
     right: 18,

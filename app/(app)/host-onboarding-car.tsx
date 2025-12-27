@@ -257,7 +257,10 @@ export default function HostOnboardingCarScreen() {
 
   const parsedYear = useMemo(() => Number(year), [year]);
   const parsedSeats = useMemo(() => Number(seats), [seats]);
-  const parsedPrice = useMemo(() => Number(pricePerDay), [pricePerDay]);
+  const parsedPrice = useMemo(
+    () => (pricePerDay.trim() ? Number(pricePerDay) : NaN),
+    [pricePerDay]
+  );
 
   const isValid = useMemo(() => {
     const yOk =
@@ -626,14 +629,29 @@ export default function HostOnboardingCarScreen() {
                     autoCorrect={false}
                   />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <SelectField
-                    label="PROVINCE"
-                    valueText={province}
-                    placeholder="Select"
-                    onPress={() => setProvinceOpen(true)}
-                  />
-                </View>
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>PROVINCE</Text>
+                <Pressable
+                  onPress={() => setProvinceOpen(true)}
+                  style={({ pressed }) => [
+                    styles.selectWrap,
+                    pressed && { opacity: 0.98 },
+                  ]}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.selectText} numberOfLines={1}>
+                    {province}
+                  </Text>
+                  <View style={styles.selectRight}>
+                    <Feather
+                      name="chevron-down"
+                      size={18}
+                      color="rgba(17,24,39,0.55)"
+                    />
+                  </View>
+                </Pressable>
               </View>
             </View>
 
@@ -859,7 +877,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  row2: { flexDirection: "row", alignItems: "flex-start", marginTop: 14 },
+  row2: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginTop: 14,
+  },
 
   inputWrap: {
     borderRadius: 16,

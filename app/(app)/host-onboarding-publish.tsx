@@ -32,9 +32,6 @@ async function getIdToken() {
   return token;
 }
 
-// NOTE: your backend currently does NOT have GET /api/host/cars/:id
-// so we fetch list + find by id (works today). Later you can replace
-// this with a proper GET /api/host/cars/:id route without changing UI.
 async function fetchHostCarById(carId: string) {
   const token = await getIdToken();
   const res = await fetch(`${API_BASE}/api/host/cars?limit=50&offset=0`, {
@@ -49,6 +46,25 @@ async function fetchHostCarById(carId: string) {
   const found = items.find((c: any) => String(c?.id) === String(carId));
   if (!found) throw new Error("Car not found");
   return found;
+}
+
+async function patchHostCar(carId: string, body: any) {
+  const token = await getIdToken();
+  const res = await fetch(
+    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+    }
+  );
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "Failed to update car");
+  return JSON.parse(text);
 }
 
 async function publishCar(carId: string) {
@@ -91,7 +107,6 @@ function normalizeGalleryUrls(car: any): string[] {
     .map((x: any) => String(x).trim())
     .filter(Boolean);
 
-  // add fallback image_path only if it looks usable
   const p = String(car?.image_path || "").trim();
   if (p && !p.startsWith("draft/")) {
     if (isHttpUrl(p)) urls.push(p);
@@ -99,7 +114,6 @@ function normalizeGalleryUrls(car: any): string[] {
       urls.push(`https://storage.googleapis.com/zipo-car-photos-ca/${p}`);
   }
 
-  // de-dupe preserve order
   const out: string[] = [];
   const seen = new Set<string>();
   for (const u of urls) {
@@ -109,6 +123,68 @@ function normalizeGalleryUrls(car: any): string[] {
     }
   }
   return out;
+}
+
+function toNumberMaybe(v: any): number | null {
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function pickStr(v: any): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
+}
+
+function buildColumnPatchFromCar(car: any) {
+  const pickup = car?.features?.pickup ?? {};
+
+  const lat =
+    toNumberMaybe(car?.pickup_lat) ?? toNumberMaybe(pickup?.pickup_lat);
+  const lng =
+    toNumberMaybe(car?.pickup_lng) ?? toNumberMaybe(pickup?.pickup_lng);
+
+  const patch: any = {};
+
+  // Only send if present/valid — don’t overwrite with null unless you want clearing behavior.
+  if (lat != null) patch.pickup_lat = lat;
+  if (lng != null) patch.pickup_lng = lng;
+
+  const pickupAddress =
+    pickStr(car?.pickup_address) ?? pickStr(pickup?.pickup_address);
+  if (pickupAddress != null) patch.pickup_address = pickupAddress;
+
+  const pickupCity = pickStr(car?.pickup_city) ?? pickStr(pickup?.pickup_city);
+  if (pickupCity != null) patch.pickup_city = pickupCity;
+
+  const pickupState =
+    pickStr(car?.pickup_state) ?? pickStr(pickup?.pickup_state);
+  if (pickupState != null) patch.pickup_state = pickupState;
+
+  const pickupCountry =
+    pickStr(car?.pickup_country) ?? pickStr(pickup?.pickup_country);
+  if (pickupCountry != null) patch.pickup_country = pickupCountry;
+
+  const pickupPostal =
+    pickStr(car?.pickup_postal_code) ?? pickStr(pickup?.pickup_postal_code);
+  if (pickupPostal != null) patch.pickup_postal_code = pickupPostal;
+
+  // (Optional) also keep full_address aligned if you want:
+  // If your pickup flow actually represents the car location:
+  // const full = pickStr(car?.full_address) ?? pickupAddress;
+  // if (full != null) patch.full_address = full;
+
+  // If your app saved ANYTHING else incorrectly in features that belongs in real columns,
+  // you can map it here similarly.
+
+  return patch;
 }
 
 function DotPager({ total, index }: { total: number; index: number }) {
@@ -172,14 +248,13 @@ export default function HostOnboardingPublishScreen() {
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
 
-  // swipe gallery
   const [activeIndex, setActiveIndex] = useState(0);
   const galleryRef = useRef<RNScrollView>(null);
 
   const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
   const GUTTER = 18;
   const HERO_W = SCREEN_W - GUTTER * 2;
-  const HERO_H = Math.min(460, Math.round(SCREEN_H * 0.48)); // big modern hero
+  const HERO_H = Math.min(460, Math.round(SCREEN_H * 0.48));
 
   const gallery: string[] = useMemo(() => normalizeGalleryUrls(car), [car]);
   const coverUrl = gallery[0] || "";
@@ -198,6 +273,15 @@ export default function HostOnboardingPublishScreen() {
     if (!car.city) issues.push("Missing city");
     if (!car.area) issues.push("Missing area");
     if (!gallery.length) issues.push("Add at least one photo");
+
+    // ✅ NEW: pickup must have coords before publish (so it appears on guest map)
+    const lat =
+      toNumberMaybe(car?.pickup_lat) ??
+      toNumberMaybe(car?.features?.pickup?.pickup_lat);
+    const lng =
+      toNumberMaybe(car?.pickup_lng) ??
+      toNumberMaybe(car?.features?.pickup?.pickup_lng);
+    if (lat == null || lng == null) issues.push("Missing pickup coordinates");
 
     return issues;
   }, [car, gallery.length]);
@@ -234,8 +318,17 @@ export default function HostOnboardingPublishScreen() {
       }
 
       setPublishing(true);
-      const { host } = await publishCar(carId);
+
+      const patch = buildColumnPatchFromCar(car);
+
+      if (Object.keys(patch).length) {
+        const patched = await patchHostCar(carId, patch);
+        if (patched?.car) setCar(patched.car);
+      }
+
+      const { host, car: publishedCar } = await publishCar(carId);
       if (host) dispatch(setHost(host));
+      if (publishedCar) setCar(publishedCar);
 
       router.replace("/(hosttabs)/hub");
     } catch (e: any) {
@@ -246,7 +339,6 @@ export default function HostOnboardingPublishScreen() {
   };
 
   const handleEdit = () => {
-    // future-proof: we can add edit sections later
     Alert.alert("Coming soon", "Edit flow will be added here.");
   };
 
@@ -329,7 +421,6 @@ export default function HostOnboardingPublishScreen() {
                           style={styles.heroImg}
                           resizeMode="cover"
                         />
-                        {/* subtle bottom fade overlay */}
                         <View style={styles.heroFade} />
                       </View>
                     ))}
@@ -337,7 +428,6 @@ export default function HostOnboardingPublishScreen() {
 
                   <DotPager total={gallery.length} index={activeIndex} />
 
-                  {/* floating pill */}
                   <View style={styles.heroPillsRow}>
                     <Pill
                       icon={statusTone === "good" ? "check" : "alert-circle"}
@@ -377,7 +467,7 @@ export default function HostOnboardingPublishScreen() {
               )}
             </View>
 
-            {/* Hero details overlay card */}
+            {/* Hero details */}
             <View style={styles.heroInfo}>
               <View style={styles.heroTitleRow}>
                 <Text style={styles.carTitle} numberOfLines={2}>
@@ -465,7 +555,6 @@ export default function HostOnboardingPublishScreen() {
             </View>
           </View>
 
-          {/* Future-proof sections placeholder */}
           <View style={{ height: 14 }} />
 
           <View style={styles.sectionCard}>
@@ -494,15 +583,21 @@ export default function HostOnboardingPublishScreen() {
             </View>
 
             <View style={styles.todoRow}>
-              <Feather name="clock" size={14} color="rgba(15,23,42,0.55)" />
-              <Text style={styles.todoText}>Pickup details</Text>
-              <Text style={styles.todoRight}>Coming soon</Text>
+              <Feather name="check" size={14} color="rgba(15,23,42,0.55)" />
+              <Text style={styles.todoText}>Pickup coords</Text>
+              <Text style={styles.todoRight}>
+                {(toNumberMaybe(car?.pickup_lat) ??
+                  toNumberMaybe(car?.features?.pickup?.pickup_lat)) != null &&
+                (toNumberMaybe(car?.pickup_lng) ??
+                  toNumberMaybe(car?.features?.pickup?.pickup_lng)) != null
+                  ? "Done"
+                  : "Missing"}
+              </Text>
             </View>
           </View>
 
           <View style={{ height: 14 }} />
 
-          {/* Publish CTA */}
           <Button
             title="Publish car"
             onPress={handlePublish}
@@ -536,7 +631,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BG },
   content: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18 },
 
-  // Top bar
   topBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -582,7 +676,6 @@ const styles = StyleSheet.create({
   },
   editBtnText: { fontSize: 12, fontWeight: "900", color: INK },
 
-  // Hero
   heroCard: {
     borderRadius: 26,
     backgroundColor: "rgba(255,255,255,0.92)",
@@ -611,8 +704,6 @@ const styles = StyleSheet.create({
     bottom: 0,
     height: 140,
     backgroundColor: "rgba(0,0,0,0.0)",
-    // cheap “fade”: overlay with semi-transparent black at bottom
-    // (no gradients without extra deps)
     opacity: 1,
   },
 
@@ -659,7 +750,6 @@ const styles = StyleSheet.create({
     maxWidth: 280,
   },
 
-  // Dots
   dots: {
     position: "absolute",
     top: 14,
@@ -673,7 +763,6 @@ const styles = StyleSheet.create({
   dotActive: { backgroundColor: "rgba(255,255,255,0.95)" },
   dotIdle: { backgroundColor: "rgba(255,255,255,0.45)" },
 
-  // Hero info
   heroInfo: {
     padding: 14,
     borderTopWidth: 1,
@@ -764,7 +853,6 @@ const styles = StyleSheet.create({
   },
   issueBtnText: { fontSize: 12, fontWeight: "900", color: "#92400E" },
 
-  // Pills
   pill: {
     flexDirection: "row",
     alignItems: "center",
@@ -794,7 +882,6 @@ const styles = StyleSheet.create({
   },
   pillTextWarn: { color: "rgba(15,23,42,0.88)" },
 
-  // Future-proof section card
   sectionCard: {
     borderRadius: 22,
     backgroundColor: "rgba(255,255,255,0.92)",
@@ -842,7 +929,6 @@ const styles = StyleSheet.create({
     color: "rgba(15,23,42,0.45)",
   },
 
-  // Back
   backLink: {
     alignSelf: "center",
     marginTop: 14,

@@ -111,6 +111,8 @@ async function requestUploadUrl(args: {
         Authorization: `Bearer ${idToken}`,
         "Content-Type": "application/json",
       },
+      // NOTE: keep camelCase if your backend expects it.
+      // If backend expects snake_case, change to: { mime_type: ..., file_name: ... }
       body: JSON.stringify({
         mimeType: args.mimeType,
         fileName: args.fileName ?? undefined,
@@ -131,7 +133,6 @@ async function requestUploadUrl(args: {
     photo: {
       id: String(json.photo.id),
       path: String(json.photo.path),
-      url: typeof json.photo.url === "string" ? String(json.photo.url) : "",
       mime: typeof json.photo.mime === "string" ? String(json.photo.mime) : "",
     },
   };
@@ -179,7 +180,6 @@ async function finalizePhotos(args: {
   photos: Array<{
     id: string;
     path: string;
-    url?: string;
     mime?: string;
     width?: number;
     height?: number;
@@ -430,6 +430,9 @@ export default function HostOnboardingPhotosScreen() {
     setBusy(true);
     setRunStats({ done: 0, total: photos.length });
 
+    // ✅ IMPORTANT: local tracker so catch marks the correct tile
+    let currentLocalId: string | null = null;
+
     try {
       // reset UI
       for (const p of photos)
@@ -438,7 +441,6 @@ export default function HostOnboardingPhotosScreen() {
       const toFinalize: Array<{
         id: string;
         path: string;
-        url?: string;
         mime?: string;
         width?: number;
         height?: number;
@@ -448,6 +450,8 @@ export default function HostOnboardingPhotosScreen() {
         if (cancelRef.current) throw new Error("Upload cancelled");
 
         const raw = photos[i];
+        currentLocalId = raw.id;
+
         setRunStats({ current: raw.id, done: i, total: photos.length });
 
         setPhotoState(raw.id, { stage: "requesting_url", progress: 0.03 });
@@ -478,7 +482,6 @@ export default function HostOnboardingPhotosScreen() {
         toFinalize.push({
           id: photo.id,
           path: photo.path,
-          url: photo.url,
           mime: photo.mime || mimeType,
           width: raw.width,
           height: raw.height,
@@ -498,8 +501,8 @@ export default function HostOnboardingPhotosScreen() {
     } catch (e: any) {
       console.warn("upload photos failed:", e?.message || e);
 
-      if (runStats.current) {
-        setPhotoState(runStats.current, {
+      if (currentLocalId) {
+        setPhotoState(currentLocalId, {
           stage: "failed",
           error: e?.message || "Upload failed",
         });
@@ -770,13 +773,6 @@ export default function HostOnboardingPhotosScreen() {
 }
 
 /** --------------- styles --------------- */
-/**
- * Modern look goals:
- * - softer background + “frosted” cards (no extra deps)
- * - crisp typography
- * - subtle shadow + border
- * - premium chips + progress
- */
 const BG = "#F6F7FB";
 const INK = "#0F172A";
 
