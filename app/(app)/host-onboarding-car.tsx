@@ -245,7 +245,6 @@ export default function HostOnboardingCarScreen() {
       .sort((a, b) => a.localeCompare(b))
       .map((b) => ({ label: b, value: b }));
 
-    // de-dupe while keeping labels
     const map = new Map<string, SelectOption>();
     for (const o of [...popular, ...all]) map.set(o.value, o);
     return Array.from(map.values());
@@ -333,7 +332,6 @@ export default function HostOnboardingCarScreen() {
         pickup_lat = geo.lat;
         pickup_lng = geo.lng;
       } catch (e: any) {
-        // Don’t block draft creation if geocode fails; just log it
         console.warn("geocode failed:", e?.message || e);
       }
 
@@ -428,15 +426,33 @@ export default function HostOnboardingCarScreen() {
           keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}
         >
-          {/* Top header */}
-          <View style={styles.topHeader}>
-            <View style={styles.stepPill}>
-              <Feather name="truck" size={14} color="rgba(17,24,39,0.78)" />
-              <Text style={styles.stepPillText}>Add car</Text>
-            </View>
+          {/* ✅ TOP ROW with Back button */}
+          <View style={styles.topRow}>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [
+                styles.backBtn,
+                pressed && { opacity: 0.85 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <Feather name="chevron-left" size={18} color="#111827" />
+            </Pressable>
 
-            {/* ✅ only shows if host is still onboarding */}
-            <HostStepIndicator current={2} total={3} />
+            <View style={styles.topHeader}>
+              <View style={styles.stepPill}>
+                <Feather
+                  name="plus-circle"
+                  size={14}
+                  color="rgba(17,24,39,0.78)"
+                />
+                <Text style={styles.stepPillText}>Add car</Text>
+              </View>
+
+              {/* ✅ only shows if host is still onboarding */}
+              <HostStepIndicator current={2} total={3} />
+            </View>
           </View>
 
           <Text style={styles.h1}>Car information</Text>
@@ -483,7 +499,6 @@ export default function HostOnboardingCarScreen() {
 
             <View style={styles.hr} />
 
-            {/* ✅ Vehicle type now uses SearchPickerModal + expanded types */}
             <SelectField
               label="VEHICLE TYPE"
               valueText={vehicleTypeLabel}
@@ -611,17 +626,14 @@ export default function HostOnboardingCarScreen() {
                     autoCorrect={false}
                   />
                 </View>
-              </View>
-
-              <View style={{ width: 12 }} />
-
-              <View style={{ flex: 1 }}>
-                <SelectField
-                  label="PROVINCE"
-                  valueText={province}
-                  placeholder="Select"
-                  onPress={() => setProvinceOpen(true)}
-                />
+                <View style={{ flex: 1 }}>
+                  <SelectField
+                    label="PROVINCE"
+                    valueText={province}
+                    placeholder="Select"
+                    onPress={() => setProvinceOpen(true)}
+                  />
+                </View>
               </View>
             </View>
 
@@ -655,7 +667,7 @@ export default function HostOnboardingCarScreen() {
           ) : null}
 
           <Button
-            title={saving ? "Creating…" : "Create draft"}
+            title={saving ? "Creating…" : "Continue"}
             onPress={handleCreateDraft}
             variant="primary"
             size="lg"
@@ -675,7 +687,7 @@ export default function HostOnboardingCarScreen() {
           <View style={{ height: 28 }} />
         </ScrollView>
 
-        {/* ✅ Search modals (keyboard-safe, fixed filtering) */}
+        {/* ✅ Search modals */}
         <SearchPickerModal
           visible={yearOpen}
           title="Select year"
@@ -740,13 +752,35 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
 
-  topHeader: {
+  // ✅ NEW: back button row
+  topRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
     marginBottom: 14,
+  },
+
+  // ✅ NEW: chevron inside circle
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(17,24,39,0.10)",
+  },
+
+  topHeader: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
   },
+
   stepPill: {
     flexDirection: "row",
     alignItems: "center",
