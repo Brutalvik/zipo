@@ -2,7 +2,7 @@
 import { useCallback, useState } from "react";
 import { auth } from "@/services/firebase";
 import { useAppDispatch } from "@/redux/hooks";
-import { updateUser } from "@/redux/slices/authSlice"; // <-- adjust to your actual path
+import { updateUser } from "@/redux/slices/authSlice"; 
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -21,7 +21,7 @@ export function useRefreshMe() {
 
     setLoading(true);
     try {
-      const idToken = await current.getIdToken(true);
+      const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) return { user: null };
 
       const res = await fetch(`${API_BASE}/api/users/me`, {

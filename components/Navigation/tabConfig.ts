@@ -1,5 +1,5 @@
 // app/config/tabConfig.ts
-import type { TabConfig } from "./tablcons";
+import type { TabConfig } from "@/components/navigation/tablcons";
 
 export const GUEST_TAB_CONFIG: TabConfig = {
   index: {
