@@ -188,7 +188,7 @@ export default function HomeScreen() {
 
     dispatch(
       fetchCars({
-        city: city || "",
+        city: search.city,
         type: selectedType === "All" ? "" : selectedType,
         limit: 50,
       })

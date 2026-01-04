@@ -33,7 +33,7 @@ export default function SearchResultCard({
   isFav?: boolean;
   originLat?: number;
   originLng?: number;
-  originLabel?: string; // "address" (default) or "city"
+  originLabel?: string; 
 }) {
   const distanceText = useMemo(() => {
     if (

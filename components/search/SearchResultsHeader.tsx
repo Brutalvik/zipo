@@ -46,7 +46,7 @@ function fmtCompact(d: Date) {
 }
 
 type Props = {
-  city: string; // keep prop name to avoid refactors; it may contain address OR city
+  city: string; 
   pickupAt: Date;
   days: number;
   onPressBack: () => void;

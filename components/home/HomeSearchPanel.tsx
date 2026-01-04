@@ -5,12 +5,12 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
+import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 import DaysPickerModal from "@/components/DaysPickerModal";
 import { addDays } from "@/lib/date";
@@ -18,9 +18,19 @@ import AndroidDateTimeSheet from "@/components/home/AndroidDateTimeSheet";
 
 export type HomeSearchState = {
   location: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  lat?: number;
+  lng?: number;
   pickupAt: Date;
-  days: number; // 1..30
+  days: number;
 };
+
+function getAddressPart(details: any, type: string): string | undefined {
+  return details?.address_components?.find((c: any) => c.types.includes(type))
+    ?.long_name;
+}
 
 function mergeDateAndTime(datePart: Date, timePart: Date) {
   const merged = new Date(datePart);
@@ -42,7 +52,6 @@ function fmtPanelDateTime(d: Date) {
   h = h % 12;
   if (h === 0) h = 12;
 
-  // Match your requested style: 17-Dec-2025 - 3:28 PM
   return `${dd}-${MMM}-${yyyy} - ${h}:${m} ${ampm}`;
 }
 
@@ -63,7 +72,6 @@ export default function HomeSearchPanel({
   const [tempDate, setTempDate] = useState<Date>(value.pickupAt);
   const [tempTime, setTempTime] = useState<Date>(value.pickupAt);
 
-  // ✅ minimum pickup time = now + 2 hours
   const minPickupAt = useMemo(() => {
     const d = new Date(Date.now() + 2 * 60 * 60 * 1000);
     d.setSeconds(0);
@@ -108,24 +116,72 @@ export default function HomeSearchPanel({
     setPickerOpen(false);
   };
 
-  const city = value.location.trim() || "your area";
-
   return (
     <View style={[styles.card, SHADOW_CARD, containerStyle]}>
       <Text style={styles.title}>Find your car</Text>
 
+      {/* LOCATION */}
       <Text style={styles.label}>Location</Text>
-      <View style={styles.inputWrap}>
-        <TextInput
-          value={value.location}
-          onChangeText={(t) => onChange({ ...value, location: t })}
-          placeholder="Search city, airport, or address"
-          placeholderTextColor="#9CA3AF"
-          style={styles.input}
-          returnKeyType="search"
-        />
-      </View>
+      <GooglePlacesAutocomplete
+        placeholder="Search city, airport, or address"
+        fetchDetails
+        debounce={300}
+        enablePoweredByContainer={false}
+        query={{
+          key: process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY!,
+          language: "en",
+        }}
+        onPress={(data, details) => {
+          if (!details) return;
 
+          const city =
+            getAddressPart(details, "locality") ||
+            getAddressPart(details, "administrative_area_level_2");
+
+          const state = getAddressPart(details, "administrative_area_level_1");
+
+          const country = getAddressPart(details, "country");
+
+          const lat = details.geometry?.location?.lat;
+          const lng = details.geometry?.location?.lng;
+
+          const label = city && state ? `${city}, ${state}` : data.description;
+
+          onChange({
+            ...value,
+            location: label,
+            city,
+            state,
+            country,
+            lat,
+            lng,
+          });
+        }}
+        textInputProps={{
+          value: value.location,
+          onChangeText: (text) => {
+            onChange({
+              ...value,
+              location: text,
+              city: undefined,
+              state: undefined,
+              country: undefined,
+              lat: undefined,
+              lng: undefined,
+            });
+          },
+          placeholderTextColor: "#9CA3AF",
+        }}
+        styles={{
+          container: styles.placesContainer,
+          textInput: styles.input,
+          listView: styles.placesList,
+          row: styles.placesRow,
+          description: styles.placesText,
+        }}
+      />
+
+      {/* PICKUP */}
       <Text style={[styles.label, { marginTop: 12 }]}>Pickup date & time</Text>
       <Pressable onPress={openPicker} style={styles.selectRow}>
         <Text style={styles.selectText}>
@@ -134,6 +190,7 @@ export default function HomeSearchPanel({
         <Text style={styles.selectHint}>Change</Text>
       </Pressable>
 
+      {/* DAYS */}
       <Text style={[styles.label, { marginTop: 12 }]}>Trip length</Text>
       <Pressable onPress={() => setDaysOpen(true)} style={styles.selectRow}>
         <Text style={styles.selectText}>
@@ -151,8 +208,8 @@ export default function HomeSearchPanel({
         <Text style={styles.ctaText}>Search Cars</Text>
       </Pressable>
 
-      {/* Android native sheet */}
-      {Platform.OS === "android" ? (
+      {/* Android picker */}
+      {Platform.OS === "android" && (
         <AndroidDateTimeSheet
           visible={pickerOpen}
           value={value.pickupAt}
@@ -162,10 +219,10 @@ export default function HomeSearchPanel({
             setPickerOpen(false);
           }}
         />
-      ) : null}
+      )}
 
-      {/* iOS pageSheet */}
-      {Platform.OS === "ios" ? (
+      {/* iOS picker */}
+      {Platform.OS === "ios" && (
         <Modal
           visible={pickerOpen}
           animationType="slide"
@@ -196,9 +253,8 @@ export default function HomeSearchPanel({
                 value={tempDate}
                 mode="date"
                 display="inline"
-                themeVariant="light"
                 onChange={(_e, d) => d && setTempDate(d)}
-                minimumDate={minPickupAt} // ✅ date can't be before now+2h day
+                minimumDate={minPickupAt}
               />
             </View>
 
@@ -208,23 +264,19 @@ export default function HomeSearchPanel({
                 value={tempTime}
                 mode="time"
                 display="spinner"
-                themeVariant="light"
                 onChange={(_e, d) => d && setTempTime(d)}
               />
             </View>
-
-            {/* (Time min isn’t supported by native picker in a clean way.
-                We enforce via clampPickup() on Done.) */}
           </View>
         </Modal>
-      ) : null}
+      )}
 
       <DaysPickerModal
         visible={daysOpen}
         value={value.days}
         maxDays={30}
         onClose={() => setDaysOpen(false)}
-        onSelect={(d: any) => onChange({ ...value, days: d })}
+        onSelect={(d: number) => onChange({ ...value, days: d })}
       />
     </View>
   );
@@ -253,15 +305,26 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
-  inputWrap: {
+  placesContainer: { flex: 0 },
+  input: {
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: "#FBFBFD",
     borderRadius: RADIUS.lg,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: COLORS.text,
   },
-  input: { fontSize: 14, color: COLORS.text },
+  placesList: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    marginTop: 6,
+    backgroundColor: "#fff",
+  },
+  placesRow: { padding: 12 },
+  placesText: { fontSize: 13, fontWeight: "800" },
 
   selectRow: {
     borderWidth: 1,
@@ -271,7 +334,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
   },
   selectText: { fontSize: 13, fontWeight: "900", color: COLORS.text },
@@ -291,27 +353,11 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 
-  countRow: {
-    marginTop: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  countBadge: {
-    backgroundColor: COLORS.black,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  countBadgeText: { color: "#fff", fontSize: 12, fontWeight: "900" },
-  countText: { color: COLORS.text, fontSize: 12, fontWeight: "800" },
-
   cta: {
     marginTop: 12,
     borderRadius: 16,
     paddingVertical: 14,
     alignItems: "center",
-    justifyContent: "center",
     backgroundColor: COLORS.black,
   },
   ctaText: { color: "#fff", fontSize: 13, fontWeight: "900" },
@@ -324,11 +370,10 @@ const styles = StyleSheet.create({
   },
   iosHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
     paddingBottom: 10,
   },
-  iosTitle: { fontSize: 14, fontWeight: "900", color: COLORS.text },
+  iosTitle: { fontSize: 14, fontWeight: "900" },
   iosBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -336,7 +381,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.06)",
   },
   iosBtnPrimary: { backgroundColor: COLORS.black },
-  iosBtnText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
+  iosBtnText: { fontSize: 12, fontWeight: "900" },
   iosBtnTextPrimary: { color: COLORS.white },
 
   iosSection: {
