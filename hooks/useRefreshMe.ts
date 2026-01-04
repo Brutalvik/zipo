@@ -21,7 +21,7 @@ export function useRefreshMe() {
 
     setLoading(true);
     try {
-      const idToken = await auth.currentUser?.getIdToken();
+      const idToken = await current.getIdToken(true);
       if (!idToken) return { user: null };
 
       const res = await fetch(`${API_BASE}/api/users/me`, {

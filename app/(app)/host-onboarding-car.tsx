@@ -26,20 +26,25 @@ import HostStepIndicator from "@/components/host/HostStepIndicator";
 import SearchPickerModal from "@/components/host/SearchPickerModal";
 import {
   ALL_BRANDS,
+  BodyType,
   CA_PROVINCES,
   CAProvince,
+  FUEL_TYPES,
+  FuelType,
   POPULAR_BRANDS,
   SelectOption,
   Transmission,
   TRANSMISSIONS,
   VEHICLE_TYPE_ITEMS,
-  VehicleType,
 } from "@/components/host/dataTypes";
 
 // ✅ Optional: if you already added geocodeAddress in your codebase, use it.
 // If you haven’t created it yet, either create it or remove this import + usage.
 import { geocodeAddress } from "@/lib/geoCode";
 import { auth } from "@/services/firebase";
+
+
+
 
 async function getIdToken() {
   const token = await auth.currentUser?.getIdToken(true);
@@ -203,9 +208,10 @@ export default function HostOnboardingCarScreen() {
   const [year, setYear] = useState("");
   const [make, setMake] = useState("");
   const [model, setModel] = useState("");
+  const [fuelType, setFuelType] = useState<FuelType | null>(null);
 
-  const [vehicleType, setVehicleType] = useState<VehicleType>(
-    VEHICLE_TYPE_ITEMS?.[0]?.value ?? "sedan"
+  const [bodyType, setBodyType] = useState<BodyType>(
+    (VEHICLE_TYPE_ITEMS?.[0]?.value ?? "sedan") as BodyType
   );
   const [transmission, setTransmission] = useState<Transmission>("automatic");
   const [seats, setSeats] = useState("5");
@@ -268,6 +274,8 @@ export default function HostOnboardingCarScreen() {
       parsedYear >= 1990 &&
       parsedYear <= new Date().getFullYear() + 1;
 
+    const fuelOk = fuelType !== null;
+
     const makeOk = make.trim().length >= 2;
     const modelOk = model.trim().length >= 1;
 
@@ -284,6 +292,7 @@ export default function HostOnboardingCarScreen() {
 
     return (
       yOk &&
+      fuelOk &&
       makeOk &&
       modelOk &&
       seatsOk &&
@@ -340,15 +349,16 @@ export default function HostOnboardingCarScreen() {
 
       const payload: any = {
         title: titleAuto.trim(),
-
-        vehicle_type: vehicleType,
+        fuel_type: fuelType,
+        vehicle_type: bodyType,
+        body_type: bodyType,
         transmission,
         seats: Number(parsedSeats),
         price_per_day: Number(parsedPrice),
 
         country_code: countryCode,
         city: city.trim(),
-        area: province, // keep your existing mapping
+        area: province,
         full_address: fullAddress,
 
         pickup_address: fullAddress,
@@ -359,27 +369,15 @@ export default function HostOnboardingCarScreen() {
         has_image: false,
         image_public: true,
 
-        features: {
-          vehicle: {
-            year: Number(parsedYear),
-            make: make.trim(),
-            model: model.trim(),
-          },
-          address: {
-            country_code: "CA",
-            line1: address1.trim(),
-            line2: address2.trim() || null,
-            city: city.trim(),
-            province,
-            postal_code: normalizePostal(postalCode),
-            full_address: fullAddress,
-          },
-          pickup: {
-            pickup_address: fullAddress,
-            pickup_lat,
-            pickup_lng,
-          },
-        },
+        year: Number(parsedYear),
+      make: make.trim(),
+      model: model.trim(),
+
+      pickup_city: city.trim(),
+      pickup_state: province,
+      pickup_country: "CA",
+      pickup_postal_code: normalizePostal(postalCode),
+      features: {},
       };
 
       const created = await createHostCarDraft(payload);
@@ -396,7 +394,7 @@ export default function HostOnboardingCarScreen() {
   }, [
     isValid,
     titleAuto,
-    vehicleType,
+    bodyType,
     transmission,
     parsedSeats,
     parsedPrice,
@@ -411,10 +409,10 @@ export default function HostOnboardingCarScreen() {
     router,
   ]);
 
-  const vehicleTypeLabel = useMemo(() => {
-    const hit = VEHICLE_TYPE_ITEMS.find((x) => x.value === vehicleType);
-    return hit?.label ?? vehicleType;
-  }, [vehicleType]);
+  const bodyTypeLabel = useMemo(() => {
+    const hit = VEHICLE_TYPE_ITEMS.find((x) => x.value === bodyType);
+    return hit?.label ?? bodyType;
+  }, [bodyType]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -485,6 +483,18 @@ export default function HostOnboardingCarScreen() {
               onPress={() => setMakeOpen(true)}
             />
 
+           <Text style={styles.label}>FUEL TYPE</Text>
+            <View style={styles.pillRow}>
+            {FUEL_TYPES.map((f) => (
+              <SegPill
+                key={f.key}
+                label={f.label}
+                selected={fuelType === f.key}
+                onPress={() => setFuelType(f.key)}
+              />
+            ))}
+          </View>
+
             <View style={{ marginTop: 14 }}>
               <Text style={styles.label}>MODEL</Text>
               <View style={styles.inputWrap}>
@@ -504,7 +514,7 @@ export default function HostOnboardingCarScreen() {
 
             <SelectField
               label="VEHICLE TYPE"
-              valueText={vehicleTypeLabel}
+              valueText={bodyTypeLabel}
               placeholder="Select type"
               onPress={() => setTypeOpen(true)}
             />
@@ -736,11 +746,11 @@ export default function HostOnboardingCarScreen() {
           visible={typeOpen}
           title="Select vehicle type"
           items={VEHICLE_TYPE_ITEMS}
-          value={vehicleType}
+          value={bodyType}
           placeholder="Search type"
           onClose={() => setTypeOpen(false)}
           onSelect={(it: any) => {
-            setVehicleType(it.value);
+            setBodyType(it.value);
             setTypeOpen(false);
           }}
         />
@@ -870,6 +880,7 @@ const styles = StyleSheet.create({
   },
 
   label: {
+    marginTop: 10,
     fontSize: 12,
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",

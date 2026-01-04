@@ -124,7 +124,6 @@ export const ALL_BRANDS = [
 ];
 
 export type Transmission = "automatic" | "manual";
-export type VehicleType = string;
 
 export type SelectOption = { label: string; value: string };
 
@@ -159,3 +158,23 @@ export const POPULAR_BRANDS = [
 ];
 
 export type CAProvince = (typeof CA_PROVINCES)[number];
+
+export type FuelType = "petrol" | "diesel" | "electric" | "hybrid";
+export type BodyType = "sedan" | "suv" | "hatchback" | "mpv" | "pickup" | "van";
+
+export const FUEL_TYPES: { key: FuelType; label: string }[] = [
+  { key: "petrol", label: "Petrol" },
+  { key: "diesel", label: "Diesel" },
+  { key: "electric", label: "Electric" },
+  { key: "hybrid", label: "Hybrid" },
+];
+
+export const BODY_TYPES: { key: BodyType; label: string }[] = [
+  { key: "sedan", label: "Sedan" },
+  { key: "suv", label: "SUV" },
+  { key: "hatchback", label: "Hatchback" },
+  { key: "mpv", label: "MPV" },
+  { key: "pickup", label: "Pickup" },
+  { key: "van", label: "Van" },
+];
+
