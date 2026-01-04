@@ -18,10 +18,19 @@ export default function CarListCard({
   onPressFav,
   isFav,
 }: Props) {
+  const handleFavPress = (e: any) => {
+    e.stopPropagation();
+    onPressFav?.();
+  };
+
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.card, SHADOW_CARD]}
+      style={({ pressed }) => [
+        styles.card,
+        SHADOW_CARD,
+        pressed && styles.cardPressed,
+      ]}
       accessibilityRole="button"
     >
       <View style={styles.imageWrap}>
@@ -32,15 +41,20 @@ export default function CarListCard({
         />
 
         <Pressable
-          onPress={onPressFav}
-          style={styles.heart}
+          onPress={handleFavPress}
+          style={({ pressed }) => [
+            styles.heart,
+            pressed && styles.heartPressed,
+          ]}
           accessibilityRole="button"
           accessibilityLabel="Favorite"
+          hitSlop={8}
         >
           <Feather
             name="heart"
             size={18}
             color={isFav ? "#EF4444" : COLORS.text}
+            fill={isFav ? "#EF4444" : "transparent"}
           />
         </Pressable>
       </View>
@@ -94,6 +108,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 14,
   },
+  cardPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.98 }],
+  },
   imageWrap: { position: "relative", backgroundColor: "#E5E7EB" },
   image: { width: "100%", height: 210 },
   heart: {
@@ -108,6 +126,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.06)",
+  },
+  heartPressed: {
+    transform: [{ scale: 0.9 }],
   },
   body: { padding: 14 },
   rowTop: {

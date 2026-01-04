@@ -18,7 +18,7 @@ import {
   View,
 } from "react-native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-
+import { useRouter } from "expo-router";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import {
   fetchCars,
@@ -79,6 +79,7 @@ function matchesCity(car: Car, cityInput: string) {
 
 export default function HomeScreen() {
   const dispatch = useAppDispatch();
+  const router = useRouter();
   const tabBarHeight = useBottomTabBarHeight();
   const insets = useSafeAreaInsets();
 
@@ -383,7 +384,12 @@ export default function HomeScreen() {
         keyExtractor={(item) => item.id}
         numColumns={2}
         columnWrapperStyle={styles.gridRow}
-        renderItem={({ item }) => <CarGridCard car={item} />}
+        renderItem={({ item }) => (
+          <CarGridCard
+            car={item}
+            onPress={() => router.push(`/car/car-details?carId=${item.id}`)}
+          />
+        )}
         refreshControl={
           <RefreshControl refreshing={isLoading} onRefresh={loadHome} />
         }

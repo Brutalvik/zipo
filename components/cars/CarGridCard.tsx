@@ -1,135 +1,89 @@
 import React from "react";
-import { Image, Pressable, Text, View, StyleSheet } from "react-native";
-import { Feather } from "@expo/vector-icons";
+import { View, Text, StyleSheet, Image, Pressable } from "react-native";
 import type { Car } from "@/types/car";
+import { COLORS, RADIUS } from "@/theme/ui";
 import { formatPricePerDay } from "@/lib/format";
-import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 
 type Props = {
   car: Car;
-  onPress?: () => void;
-  onPressFav?: () => void;
-  onPressBook?: () => void;
-  isFav?: boolean;
+  onPress: () => void;
 };
 
-export default function CarGridCard({
-  car,
-  onPress,
-  onPressFav,
-  onPressBook,
-  isFav,
-}: Props) {
+export default function CarGridCard({ car, onPress }: Props) {
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.card, SHADOW_CARD]}
-      accessibilityRole="button"
+      style={({ pressed }) => [styles.container, pressed && styles.pressed]}
     >
-      <View style={styles.imageWrap}>
-        <Image
-          source={{ uri: car.imageUrl }}
-          style={styles.image}
-          resizeMode="cover"
-        />
+      <Image source={{ uri: car.imageUrl }} style={styles.image} />
 
-        <Pressable
-          onPress={onPressFav}
-          style={styles.heart}
-          accessibilityRole="button"
-          accessibilityLabel="Favorite"
-        >
-          <Feather
-            name="heart"
-            size={16}
-            color={isFav ? COLORS.red : COLORS.text}
-          />
-        </Pressable>
-      </View>
+      <View style={styles.content}>
+        <Text style={styles.title} numberOfLines={1}>
+          {car.title}
+        </Text>
 
-      <Text style={styles.name} numberOfLines={1}>
-        {car.title}
-      </Text>
-
-      <View style={styles.ratingRow}>
-        <Text style={styles.ratingText}>{car.rating.toFixed(1)}</Text>
-        <Text style={styles.star}>★</Text>
-        <Text style={styles.reviews}>({car.reviews})</Text>
-      </View>
-
-      <View style={styles.locRow}>
-        <Feather name="map-pin" size={12} color={COLORS.muted} />
         <Text style={styles.location} numberOfLines={1}>
           {car.location}
         </Text>
-      </View>
 
-      <View style={styles.bottomRow}>
-        <Text style={styles.price}>{formatPricePerDay(car.pricePerDay)}</Text>
-
-        <Pressable
-          onPress={onPressBook}
-          style={styles.bookBtn}
-          accessibilityRole="button"
-        >
-          <Text style={styles.bookText}>Book now</Text>
-        </Pressable>
+        <View style={styles.footer}>
+          <Text style={styles.price}>{formatPricePerDay(car.pricePerDay)}</Text>
+          <View style={styles.rating}>
+            <Text style={styles.ratingText}>{car.rating.toFixed(1)} ⭐</Text>
+          </View>
+        </View>
       </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
+  container: {
     width: "48%",
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.xl,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 12,
+    borderRadius: RADIUS.lg,
+    overflow: "hidden",
+    marginBottom: 12,
   },
-  imageWrap: { position: "relative" },
+  pressed: {
+    opacity: 0.7,
+  },
   image: {
     width: "100%",
-    height: 92,
-    borderRadius: RADIUS.md,
-    backgroundColor: "#E5E7EB",
+    height: 140,
+    backgroundColor: COLORS.border,
   },
-  heart: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    width: 32,
-    height: 32,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.92)",
-    alignItems: "center",
-    justifyContent: "center",
+  content: {
+    padding: 12,
   },
-  name: { marginTop: 8, fontSize: 13, fontWeight: "800", color: COLORS.text },
-  ratingRow: {
+  title: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  location: {
+    fontSize: 11,
+    color: COLORS.muted,
     marginTop: 4,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
   },
-  ratingText: { fontSize: 12, fontWeight: "700", color: COLORS.text },
-  star: { fontSize: 12, color: COLORS.amber },
-  reviews: { fontSize: 12, color: COLORS.muted },
-  locRow: { marginTop: 4, flexDirection: "row", alignItems: "center", gap: 6 },
-  location: { fontSize: 12, color: COLORS.muted, flex: 1 },
-  bottomRow: {
-    marginTop: 12,
+  footer: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
   },
-  price: { fontSize: 12, fontWeight: "800", color: COLORS.text },
-  bookBtn: {
-    backgroundColor: COLORS.black,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 999,
+  price: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: COLORS.text,
   },
-  bookText: { color: COLORS.white, fontSize: 11, fontWeight: "700" },
+  rating: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  ratingText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
 });
