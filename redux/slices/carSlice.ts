@@ -99,13 +99,8 @@ export const fetchCars = createAsyncThunk<
 >("cars/fetchCars", async (params, thunkApi) => {
   try {
     const res = await apiFetchCars(params);
-
-    // api layer may return unknown shapes; normalize there.
-    // Here we treat res.items as CarApi[]
     const apiItems = (res.items ?? []) as CarApi[];
     const items = apiItems.map(mapCarApiToCar);
-    // console.log("Fetched cars:", items);
-
     const page: Page = res.page
       ? {
           limit: Number(res.page.limit ?? 20),

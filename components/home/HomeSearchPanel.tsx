@@ -1,10 +1,18 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import { COLORS, RADIUS, SHADOW_CARD } from "@/theme/ui";
 import DaysPickerModal from "@/components/DaysPickerModal";
 import { addDays } from "@/lib/date";
 import CustomCalendar from "@/components/common/CustomCalendar";
+import { geocodeCity } from "@/lib/locationHelpers";
+import { fetchCarsForRadius } from "@/services/carsApi";
 
 export type HomeSearchState = {
   location: string;
@@ -30,8 +38,7 @@ function fmtPanelDateTime(d: Date) {
   let h = d.getHours();
   const m = String(d.getMinutes()).padStart(2, "0");
   const ampm = h >= 12 ? "PM" : "AM";
-  h = h % 12;
-  if (h === 0) h = 12;
+  h = h % 12 || 12;
 
   return `${dd}-${MMM}-${yyyy} - ${h}:${m} ${ampm}`;
 }
@@ -39,16 +46,26 @@ function fmtPanelDateTime(d: Date) {
 export default function HomeSearchPanel({
   value,
   onChange,
-  onPressSearch,
+  onPressSearch, // called after cars are fetched
   containerStyle,
+  countryCode = "ca",
 }: {
   value: HomeSearchState;
   onChange: (next: HomeSearchState) => void;
-  onPressSearch: () => void;
+  onPressSearch?: (cars: any[]) => void;
   containerStyle?: any;
+  countryCode?: string;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [daysOpen, setDaysOpen] = useState(false);
+
+  const autocompleteRef = useRef<any>(null);
+  const [inputText, setInputText] = useState(value.location);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    setInputText(value.location);
+  }, [value.location]);
 
   const minPickupAt = useMemo(() => {
     const d = new Date(Date.now() + 2 * 60 * 60 * 1000);
@@ -66,11 +83,63 @@ export default function HomeSearchPanel({
     (date: Date) => {
       const clamped =
         date.getTime() < minPickupAt.getTime() ? new Date(minPickupAt) : date;
-
       onChange({ ...value, pickupAt: clamped });
     },
     [minPickupAt, onChange, value]
   );
+
+  /** ===== New: handle search with auto geocode ===== */
+  const handleSearch = useCallback(async () => {
+    if (!value.location?.trim()) {
+      alert("Please enter a location");
+      return;
+    }
+
+    setSearching(true);
+    try {
+      let lat = value.lat;
+      let lng = value.lng;
+      let cityLabel = value.city;
+
+      // Fallback geocode if coordinates missing
+      if (!lat || !lng) {
+        try {
+          const geo = await geocodeCity(value.location);
+          lat = geo.lat;
+          lng = geo.lng;
+          cityLabel = geo.cityLabel;
+
+          // Update panel state with resolved coordinates
+          onChange({
+            ...value,
+            lat,
+            lng,
+            city: cityLabel,
+          });
+        } catch (err) {
+          console.warn("Geocode failed:", err);
+          alert("Please select a valid location");
+          setSearching(false);
+          return;
+        }
+      }
+
+      // Fetch cars within 15km radius
+      const cars = await fetchCarsForRadius(
+        process.env.EXPO_PUBLIC_API_BASE!,
+        lat,
+        lng,
+        15
+      );
+
+      console.log("Cars found:", cars.length);
+
+      // Callback with cars
+      onPressSearch?.(cars);
+    } finally {
+      setSearching(false);
+    }
+  }, [value, onChange, onPressSearch]);
 
   return (
     <View style={[styles.card, SHADOW_CARD, containerStyle]}>
@@ -79,13 +148,17 @@ export default function HomeSearchPanel({
       {/* LOCATION */}
       <Text style={styles.label}>Location</Text>
       <GooglePlacesAutocomplete
+        ref={autocompleteRef}
         placeholder="Search city, airport, or address"
         fetchDetails
         debounce={300}
         enablePoweredByContainer={false}
+        listViewDisplayed="auto"
+        keepResultsAfterBlur={false}
         query={{
           key: process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY!,
           language: "en",
+          components: `country:${countryCode}`,
         }}
         onPress={(data, details) => {
           if (!details) return;
@@ -93,14 +166,16 @@ export default function HomeSearchPanel({
           const city =
             getAddressPart(details, "locality") ||
             getAddressPart(details, "administrative_area_level_2");
-
           const state = getAddressPart(details, "administrative_area_level_1");
           const country = getAddressPart(details, "country");
-
           const lat = details.geometry?.location?.lat;
           const lng = details.geometry?.location?.lng;
+          const label = data.description;
 
-          const label = city && state ? `${city}, ${state}` : data.description;
+          setInputText(label);
+          setTimeout(() => {
+            autocompleteRef.current?.setAddressText(label);
+          }, 0);
 
           onChange({
             ...value,
@@ -113,8 +188,9 @@ export default function HomeSearchPanel({
           });
         }}
         textInputProps={{
-          value: value.location,
-          onChangeText: (text) =>
+          value: inputText,
+          onChangeText: (text) => {
+            setInputText(text);
             onChange({
               ...value,
               location: text,
@@ -123,15 +199,26 @@ export default function HomeSearchPanel({
               country: undefined,
               lat: undefined,
               lng: undefined,
-            }),
+            });
+          },
           placeholderTextColor: "#9CA3AF",
         }}
+        renderRow={(rowData) => (
+          <View
+            style={styles.placesRow}
+            onTouchStart={() => {
+              setInputText(rowData.description);
+              onChange({ ...value, location: rowData.description });
+            }}
+          >
+            <Text style={styles.placesText}>{rowData.description}</Text>
+          </View>
+        )}
         styles={{
           container: styles.placesContainer,
           textInput: styles.input,
           listView: styles.placesList,
-          row: styles.placesRow,
-          description: styles.placesText,
+          separator: { height: 0 },
         }}
       />
 
@@ -158,8 +245,14 @@ export default function HomeSearchPanel({
         <Text style={styles.previewValue}>{fmtPanelDateTime(dropoffAt)}</Text>
       </View>
 
-      <Pressable onPress={onPressSearch} style={styles.cta}>
-        <Text style={styles.ctaText}>Search Cars</Text>
+      <Pressable
+        onPress={handleSearch}
+        style={[styles.cta, searching && { opacity: 0.7 }]}
+        disabled={searching}
+      >
+        <Text style={styles.ctaText}>
+          {searching ? "Searching..." : "Search Cars"}
+        </Text>
       </Pressable>
 
       {/* CALENDAR MODAL */}
@@ -206,8 +299,7 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     marginBottom: 8,
   },
-
-  placesContainer: { flex: 0 },
+  placesContainer: { flex: 0, zIndex: 1000 },
   input: {
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -224,10 +316,10 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     marginTop: 6,
     backgroundColor: "#fff",
+    zIndex: 10000,
   },
-  placesRow: { padding: 12 },
+  placesRow: { padding: 2 },
   placesText: { fontSize: 13, fontWeight: "800" },
-
   selectRow: {
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -240,7 +332,6 @@ const styles = StyleSheet.create({
   },
   selectText: { fontSize: 13, fontWeight: "900", color: COLORS.text },
   selectHint: { fontSize: 12, fontWeight: "800", color: COLORS.muted },
-
   preview: {
     marginTop: 14,
     borderRadius: RADIUS.lg,
@@ -254,7 +345,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: COLORS.text,
   },
-
   cta: {
     marginTop: 12,
     borderRadius: 16,

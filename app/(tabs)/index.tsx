@@ -48,6 +48,7 @@ import SearchResultCard from "@/components/search/SearchResultCard";
 import vehicleTypesRaw from "@/data/vehicleTypes.json";
 import { COLORS } from "@/theme/ui";
 import type { Car } from "@/types/car";
+import { geocodeCity } from "@/lib/locationHelpers";
 
 function titleCaseCity(input: string) {
   const s = (input || "").trim();
@@ -100,7 +101,7 @@ export default function HomeScreen() {
 
   const [search, setSearch] = useState<HomeSearchState>({
     location: "",
-    pickupAt: defaultPickupAtPlus2Hours(), // ✅ default now + 2 hours
+    pickupAt: defaultPickupAtPlus2Hours(),
     days: 3,
   });
 
@@ -184,20 +185,51 @@ export default function HomeScreen() {
     [anim]
   );
 
-  const onPressSearch = useCallback(() => {
-    const city = search.location.trim();
+  const onPressSearch = useCallback(async () => {
+    try {
+      let lat = search.lat;
+      let lng = search.lng;
+      let cityLabel = search.city;
 
-    dispatch(
-      fetchCars({
-        city: search.city,
-        type: selectedType === "All" ? "" : selectedType,
-        limit: 50,
-      })
-    );
+      if (!lat || !lng) {
+        if (!search.location?.trim()) {
+          alert("Please select a valid location");
+          return;
+        }
 
-    setIsSearchMode(true);
-    runEnterSearchAnim();
-  }, [dispatch, search.location, selectedType, runEnterSearchAnim]);
+        const geo = await geocodeCity(search.location);
+        lat = geo.lat;
+        lng = geo.lng;
+        cityLabel = geo.cityLabel;
+
+        // update search state with new lat/lng/city
+        setSearch((prev) => ({
+          ...prev,
+          lat,
+          lng,
+          city: cityLabel,
+          location: geo.cityLabel,
+        }));
+      }
+
+      // dispatch the API call with up-to-date coords
+      dispatch(
+        fetchCars({
+          city: cityLabel,
+          lat,
+          lng,
+          radius: 20,
+          type: selectedType === "All" ? "" : selectedType,
+          limit: 50,
+        })
+      );
+      setIsSearchMode(true);
+      runEnterSearchAnim();
+    } catch (err) {
+      console.warn("Search failed", err);
+      alert("Failed to search location");
+    }
+  }, [dispatch, search, selectedType, runEnterSearchAnim]);
 
   const onPressBackFromSearch = useCallback(() => {
     setEditorOpen(false);
@@ -410,6 +442,7 @@ export default function HomeScreen() {
                 value={search}
                 onChange={setSearch}
                 onPressSearch={onPressSearch}
+                countryCode="ca"
               />
             </Animated.View>
 

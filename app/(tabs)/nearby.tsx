@@ -16,7 +16,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
+import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
 import Slider from "@react-native-community/slider";
 import { Feather } from "@expo/vector-icons";
@@ -28,6 +28,11 @@ import NearbyFiltersModal, {
   DEFAULT_FILTERS,
   NearbyFilters,
 } from "@/components/nearby/NearbyFilterModal";
+import {
+  bboxFromRadiusKm,
+  regionFromRadius,
+  titleCaseCity,
+} from "@/lib/locationHelpers";
 
 type ApiCar = {
   id: string;
@@ -55,42 +60,6 @@ type ApiCar = {
 const PRICE_MAX = 300; // 300 means "300+ (no cap)"
 const RATING_ANY = 5.0; // 5.0 means "Any"
 const LOCATION_EXPLAINER_KEY = "zipo_location_explainer_shown_v1";
-
-function titleCaseCity(input: string) {
-  const s = (input || "").trim();
-  if (!s) return "";
-  return s
-    .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
-}
-
-function bboxFromRadiusKm(lat: number, lng: number, radiusKm: number) {
-  const dLat = radiusKm / 111;
-  const cos = Math.cos((lat * Math.PI) / 180);
-  const dLng = radiusKm / (111 * Math.max(0.0001, cos));
-  return {
-    minLat: lat - dLat,
-    maxLat: lat + dLat,
-    minLng: lng - dLng,
-    maxLng: lng + dLng,
-  };
-}
-
-function regionFromRadius(lat: number, lng: number, radiusKm: number): Region {
-  const latDelta = Math.min(1.2, Math.max(0.02, (radiusKm / 111) * 2.4));
-  const cos = Math.cos((lat * Math.PI) / 180);
-  const lngDelta = Math.min(
-    1.2,
-    Math.max(0.02, (radiusKm / (111 * Math.max(0.0001, cos))) * 2.4)
-  );
-  return {
-    latitude: lat,
-    longitude: lng,
-    latitudeDelta: latDelta,
-    longitudeDelta: lngDelta,
-  };
-}
 
 function filterToChips(f: NearbyFilters): string[] {
   const chips: string[] = [];
