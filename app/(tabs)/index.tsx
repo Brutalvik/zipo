@@ -66,18 +66,6 @@ function defaultPickupAtPlus2Hours() {
   return d;
 }
 
-function matchesCity(car: Car, cityInput: string) {
-  const q = (cityInput || "").trim().toLowerCase();
-  if (!q) return true;
-
-  const hay = [car.city, car.area, car.location, car.countryCode, car.title]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return hay.includes(q);
-}
-
 export default function HomeScreen() {
   const dispatch = useAppDispatch();
   const router = useRouter();
@@ -86,7 +74,7 @@ export default function HomeScreen() {
 
   const featured = useAppSelector(selectFeaturedCars);
   const popular = useAppSelector(selectPopularCars);
-  const cars = useAppSelector(selectCars);
+  const cars = useAppSelector(selectCars); // Only used for home browse
 
   const statusList = useAppSelector(selectCarsStatus);
   const statusFeatured = useAppSelector(selectFeaturedStatus);
@@ -106,6 +94,10 @@ export default function HomeScreen() {
   });
 
   const [isSearchMode, setIsSearchMode] = useState(false);
+
+  // NEW: Local state for search results
+  const [searchResultsLocal, setSearchResultsLocal] = useState<Car[]>([]);
+
   const [favIds, setFavIds] = useState<Record<string, boolean>>({});
 
   // collapse home search panel when entering search mode
@@ -157,15 +149,6 @@ export default function HomeScreen() {
     );
   }, [cars, featured, selectedType]);
 
-  // Search results list (search mode list)
-  const searchResults = useMemo(() => {
-    if (!isSearchMode) return [];
-    if (selectedType === "All") return cars;
-    return cars.filter(
-      (c) => (c.vehicleType ?? "").toLowerCase() === selectedType.toLowerCase()
-    );
-  }, [cars, selectedType, isSearchMode]);
-
   const runEnterSearchAnim = useCallback(() => {
     Animated.timing(anim, {
       toValue: 1,
@@ -202,7 +185,6 @@ export default function HomeScreen() {
         lng = geo.lng;
         cityLabel = geo.cityLabel;
 
-        // update search state with new lat/lng/city
         setSearch((prev) => ({
           ...prev,
           lat,
@@ -212,17 +194,40 @@ export default function HomeScreen() {
         }));
       }
 
-      // dispatch the API call with up-to-date coords
-      dispatch(
+      const pickupDate = new Date(search.pickupAt);
+      const returnDate = new Date(pickupDate);
+      returnDate.setDate(returnDate.getDate() + search.days);
+
+      const pickup = pickupDate.toISOString().split("T")[0];
+      const return_ = returnDate.toISOString().split("T")[0];
+
+      const result = await dispatch(
         fetchCars({
           city: cityLabel,
           lat,
           lng,
-          radius: 20,
-          type: selectedType === "All" ? "" : selectedType,
+          radius: 50,
+          type: selectedType === "All" ? "" : selectedType.toLowerCase(),
           limit: 50,
+          pickup_date: pickup,
+          return_date: return_,
         })
       );
+
+      console.log("FULL RESULT:", result);
+      console.log("RESULT TYPE:", result.type);
+      console.log("RESULT PAYLOAD:", result.payload);
+      console.log("PAYLOAD KEYS:", Object.keys(result.payload || {}));
+
+      // ✅ FIXED: Correctly extract items from thunk payload
+      const payload = result.payload as { items: Car[]; page: any } | undefined;
+      const foundCars = payload?.items || [];
+
+      console.log("Search found cars:", foundCars.length);
+      console.log("Actual cars:", foundCars);
+
+      setSearchResultsLocal(foundCars);
+
       setIsSearchMode(true);
       runEnterSearchAnim();
     } catch (err) {
@@ -234,7 +239,10 @@ export default function HomeScreen() {
   const onPressBackFromSearch = useCallback(() => {
     setEditorOpen(false);
     overlay.setValue(0);
-    runExitSearchAnim(() => setIsSearchMode(false));
+    runExitSearchAnim(() => {
+      setIsSearchMode(false);
+      setSearchResultsLocal([]); // Clear when going back
+    });
   }, [overlay, runExitSearchAnim]);
 
   const openEditor = useCallback(() => {
@@ -272,6 +280,20 @@ export default function HomeScreen() {
     inputRange: [0, 1],
     outputRange: [8, 0],
   });
+
+  // ✅ FIXED: Moved outside the conditional to avoid hook order violation
+  const filteredResults = useMemo(() => {
+    if (!isSearchMode) return [];
+    if (selectedType === "All") return searchResultsLocal;
+    return searchResultsLocal.filter(
+      (c) => (c.vehicleType ?? "").toLowerCase() === selectedType.toLowerCase()
+    );
+  }, [isSearchMode, searchResultsLocal, selectedType]);
+
+  console.log(
+    "Rendering search mode with filteredResults:",
+    filteredResults.length
+  );
 
   // ---------------------------
   // SEARCH MODE
@@ -326,7 +348,7 @@ export default function HomeScreen() {
         />
 
         <FlatList
-          data={searchResults}
+          data={filteredResults}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <SearchResultCard
@@ -340,12 +362,12 @@ export default function HomeScreen() {
           ListHeaderComponent={
             <View style={styles.resultsSummary}>
               <Text style={styles.resultsCount}>
-                {searchResults.length === 0
+                {filteredResults.length === 0
                   ? "No cars available"
-                  : `${searchResults.length} cars available`}
+                  : `${filteredResults.length} cars available`}
               </Text>
 
-              {searchResults.length !== 0 && (
+              {filteredResults.length !== 0 && (
                 <Text style={styles.resultsSub}>
                   Showing cars in {titleCaseCity(search.location)}
                 </Text>

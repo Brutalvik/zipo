@@ -420,7 +420,6 @@ export default function HostOnboardingPhotosScreen() {
 
     if (busy) return;
 
-    // single CTA:
     if (!canContinue) {
       await pickPhotos();
       return;
@@ -429,9 +428,6 @@ export default function HostOnboardingPhotosScreen() {
     cancelRef.current = false;
     setBusy(true);
     setRunStats({ done: 0, total: photos.length });
-
-    // ✅ IMPORTANT: local tracker so catch marks the correct tile
-    let currentLocalId: string | null = null;
 
     try {
       // reset UI
@@ -446,33 +442,40 @@ export default function HostOnboardingPhotosScreen() {
         height?: number;
       }> = [];
 
-      for (let i = 0; i < photos.length; i++) {
+      // function to process & upload one photo
+      const uploadPhoto = async (raw: PickedPhoto) => {
         if (cancelRef.current) throw new Error("Upload cancelled");
-
-        const raw = photos[i];
-        currentLocalId = raw.id;
-
-        setRunStats({ current: raw.id, done: i, total: photos.length });
 
         setPhotoState(raw.id, { stage: "requesting_url", progress: 0.03 });
 
-        const p = await ensurePngPhoto(raw);
-        const mimeType = "image/png";
+        // resize & convert to JPEG
+        const processed = await ImageManipulator.manipulateAsync(
+          raw.uri,
+          [{ resize: { width: 1080 } }],
+          {
+            format: ImageManipulator.SaveFormat.JPEG,
+            compress: 0.8,
+          }
+        );
+
+        const mimeType = "image/jpeg";
+        const fileName =
+          raw.fileName?.replace(/\.(png|webp|heic)$/i, ".jpg") ??
+          `photo-${raw.id}.jpg`;
 
         const { uploadUrl, photo } = await requestUploadUrl({
           carId,
           mimeType,
-          fileName: p.fileName ?? null,
+          fileName,
         });
 
         setPhotoState(raw.id, { stage: "uploading", progress: 0.08 });
 
         await uploadWithProgressXHR({
           uploadUrl,
-          uri: p.uri,
+          uri: processed.uri,
           contentType: mimeType,
           onProgress: (frac) => {
-            // 0..1 -> 0.10..0.92
             setPhotoState(raw.id, { progress: 0.1 + 0.82 * clamp01(frac) });
           },
         });
@@ -488,9 +491,20 @@ export default function HostOnboardingPhotosScreen() {
         });
 
         setPhotoState(raw.id, { stage: "done", progress: 1 });
-        setRunStats({ current: raw.id, done: i + 1, total: photos.length });
+        setRunStats((prev) => ({
+          ...prev,
+          done: (prev.done || 0) + 1,
+        }));
+      };
+
+      // upload 3–4 photos in parallel at a time
+      const CONCURRENCY = 3;
+      for (let i = 0; i < photos.length; i += CONCURRENCY) {
+        const batch = photos.slice(i, i + CONCURRENCY);
+        await Promise.all(batch.map(uploadPhoto));
       }
 
+      // finalize all photos on backend
       await finalizePhotos({ carId, photos: toFinalize });
 
       Alert.alert("Done", "Photos uploaded. Your draft car is updated.");
@@ -501,8 +515,8 @@ export default function HostOnboardingPhotosScreen() {
     } catch (e: any) {
       console.warn("upload photos failed:", e?.message || e);
 
-      if (currentLocalId) {
-        setPhotoState(currentLocalId, {
+      if (e?.photoId) {
+        setPhotoState(e.photoId, {
           stage: "failed",
           error: e?.message || "Upload failed",
         });

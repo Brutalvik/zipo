@@ -77,6 +77,8 @@ export type CarsListParams = Partial<{
   lat?: number;
   lng?: number;
   radius?: string | number;
+  pickup_date?: string;
+  return_date?: string;
 }>;
 
 function toQuery(params?: CarsListParams) {
