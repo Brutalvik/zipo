@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -6,17 +6,19 @@ import {
   Pressable,
   Modal,
   ScrollView,
+  Platform,
 } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { COLORS, RADIUS } from "@/theme/ui";
+import { COLORS } from "@/theme/ui";
 
 type CalendarProps = {
   visible: boolean;
   onClose: () => void;
-  onSelect: (pickup: Date, dropoff: Date) => void;
-  initialPickup?: Date;
-  initialDropoff?: Date;
-  mode?: "pickup" | "return";
+  onSelect: (date: Date) => void;
+  initialDate?: Date;
+  mode: "pickup" | "return";
+  disabledDates?: Date[];
+  minDate?: Date;
 };
 
 const MONTHS = [
@@ -33,37 +35,89 @@ const MONTHS = [
   "November",
   "December",
 ];
-
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const OPTION_HEIGHT = 44;
 
 export default function CustomCalendar({
   visible,
   onClose,
   onSelect,
-  initialPickup,
-  initialDropoff,
-  mode = "pickup",
+  initialDate,
+  mode,
+  disabledDates = [],
+  minDate,
 }: CalendarProps) {
+  const hourScrollRef = useRef<ScrollView>(null);
+  const minuteScrollRef = useRef<ScrollView>(null);
+
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [pickupDate, setPickupDate] = useState<Date | null>(
-    initialPickup || null
+  const [selectedDate, setSelectedDate] = useState<Date | null>(
+    initialDate || null
   );
-  const [dropoffDate, setDropoffDate] = useState<Date | null>(
-    initialDropoff || null
-  );
-  const [editingTime, setEditingTime] = useState<"pickup" | "dropoff" | null>(
-    null
-  );
-  const [pickupTime, setPickupTime] = useState({
-    hour: (initialPickup?.getHours() ?? 10) % 12 || 10,
-    minute: initialPickup?.getMinutes() ?? 30,
-    period: (initialPickup?.getHours() ?? 10) >= 12 ? "pm" : "am",
-  });
-  const [dropoffTime, setDropoffTime] = useState({
-    hour: (initialDropoff?.getHours() ?? 17) % 12 || 5,
-    minute: initialDropoff?.getMinutes() ?? 30,
-    period: (initialDropoff?.getHours() ?? 17) >= 12 ? "pm" : "am",
-  });
+  const [editingTime, setEditingTime] = useState(false);
+
+  // Calculate +2 hours from now, rounded to nearest 5 mins
+  const getInitialTimeState = () => {
+    if (initialDate) {
+      return {
+        hour: initialDate.getHours() % 12 || 12,
+        minute: (Math.round(initialDate.getMinutes() / 5) * 5) % 60,
+        period: initialDate.getHours() >= 12 ? "pm" : "am",
+      };
+    }
+    const date = new Date();
+    date.setHours(date.getHours() + 2);
+    // Round minutes to nearest 5
+    const roundedMins = Math.ceil(date.getMinutes() / 5) * 5;
+    if (roundedMins === 60) {
+      date.setHours(date.getHours() + 1);
+      date.setMinutes(0);
+    } else {
+      date.setMinutes(roundedMins);
+    }
+
+    return {
+      hour: date.getHours() % 12 || 12,
+      minute: date.getMinutes(),
+      period: date.getHours() >= 12 ? "pm" : "am",
+    };
+  };
+
+  const [time, setTime] = useState(getInitialTimeState());
+
+  // Center the time picker on open based on the calculated +2h
+  useEffect(() => {
+    if (editingTime) {
+      setTimeout(() => {
+        hourScrollRef.current?.scrollTo({
+          y: (time.hour - 1) * OPTION_HEIGHT,
+          animated: true,
+        });
+        minuteScrollRef.current?.scrollTo({
+          y: (time.minute / 5) * OPTION_HEIGHT,
+          animated: true,
+        });
+      }, 100);
+    }
+  }, [editingTime]);
+
+  const isTimeDisabled = (h: number, m: number, p: string) => {
+    const now = new Date();
+    const minTime = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    const isToday = selectedDate
+      ? selectedDate.toDateString() === now.toDateString()
+      : true;
+
+    if (!isToday) return false;
+
+    let selectedH = h;
+    if (p === "pm" && h !== 12) selectedH += 12;
+    if (p === "am" && h === 12) selectedH = 0;
+
+    const check = new Date(now);
+    check.setHours(selectedH, m, 0, 0);
+    return check < minTime;
+  };
 
   const calendarDays = useMemo(() => {
     const year = currentMonth.getFullYear();
@@ -71,17 +125,15 @@ export default function CustomCalendar({
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const prevMonthDays = new Date(year, month, 0).getDate();
-    const days: { day: number; isCurrentMonth: boolean; date: Date }[] = [];
+    const days = [];
 
     for (let i = firstDay - 1; i >= 0; i--) {
-      const day = prevMonthDays - i;
       days.push({
-        day,
+        day: prevMonthDays - i,
         isCurrentMonth: false,
-        date: new Date(year, month - 1, day),
+        date: new Date(year, month - 1, prevMonthDays - i),
       });
     }
-
     for (let i = 1; i <= daysInMonth; i++) {
       days.push({
         day: i,
@@ -89,222 +141,143 @@ export default function CustomCalendar({
         date: new Date(year, month, i),
       });
     }
-
-    const remainingDays = 42 - days.length;
-    for (let i = 1; i <= remainingDays; i++) {
+    const remaining = 42 - days.length;
+    for (let i = 1; i <= remaining; i++) {
       days.push({
         day: i,
         isCurrentMonth: false,
         date: new Date(year, month + 1, i),
       });
     }
-
     return days;
   }, [currentMonth]);
 
-  const handleDayPress = (date: Date, isCurrentMonth: boolean) => {
-    if (!isCurrentMonth) return;
-
-    if (mode === "pickup" || !pickupDate) {
-      setPickupDate(date);
-      setDropoffDate(null);
-    } else if (!dropoffDate) {
-      if (date >= pickupDate) {
-        setDropoffDate(date);
-      } else {
-        setPickupDate(date);
-        setDropoffDate(null);
-      }
-    } else {
-      setPickupDate(date);
-      setDropoffDate(null);
-    }
-  };
-
-  const isInRange = (date: Date) => {
-    if (!pickupDate || !dropoffDate) return false;
-    return date > pickupDate && date < dropoffDate;
-  };
-
-  const isPickup = (date: Date) => {
-    return pickupDate && date.toDateString() === pickupDate.toDateString();
-  };
-
-  const isDropoff = (date: Date) => {
-    return dropoffDate && date.toDateString() === dropoffDate.toDateString();
-  };
-
   const handleDone = () => {
-    const finalPickup = pickupDate || new Date();
-    const finalDropoff =
-      dropoffDate || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
-
-    const pickup = new Date(finalPickup);
-    pickup.setHours(
-      pickupTime.period === "pm" && pickupTime.hour !== 12
-        ? pickupTime.hour + 12
-        : pickupTime.hour === 12 && pickupTime.period === "am"
-        ? 0
-        : pickupTime.hour,
-      pickupTime.minute,
-      0,
-      0
-    );
-
-    const dropoff = new Date(finalDropoff);
-    dropoff.setHours(
-      dropoffTime.period === "pm" && dropoffTime.hour !== 12
-        ? dropoffTime.hour + 12
-        : dropoffTime.hour === 12 && dropoffTime.period === "am"
-        ? 0
-        : dropoffTime.hour,
-      dropoffTime.minute,
-      0,
-      0
-    );
-
-    onSelect(pickup, dropoff);
+    if (!selectedDate) return;
+    const final = new Date(selectedDate);
+    let h = time.hour;
+    if (time.period === "pm" && h !== 12) h += 12;
+    if (time.period === "am" && h === 12) h = 0;
+    final.setHours(h, time.minute, 0, 0);
+    onSelect(final);
     onClose();
   };
 
-  const prevMonth = () => {
-    setCurrentMonth(
-      new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1)
-    );
-  };
-
-  const nextMonth = () => {
-    setCurrentMonth(
-      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1)
-    );
-  };
-
-  const updateTime = (
-    type: "pickup" | "dropoff",
-    field: "hour" | "minute" | "period",
-    value: number | string
-  ) => {
-    if (type === "pickup") {
-      setPickupTime((prev) => ({ ...prev, [field]: value }));
-    } else {
-      setDropoffTime((prev) => ({ ...prev, [field]: value }));
-    }
-  };
-
   if (editingTime) {
-    const time = editingTime === "pickup" ? pickupTime : dropoffTime;
-    const hours = Array.from({ length: 12 }, (_, i) => i + 1);
-    const minutes = Array.from({ length: 60 }, (_, i) => i);
-
     return (
       <Modal visible={visible} transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.container}>
-            <Text style={styles.title}>Select Time</Text>
-
+            <Text style={styles.title}>{mode} Time</Text>
+            <View style={styles.disclaimerBox}>
+              <Feather name="info" size={14} color="#666" />
+              <Text style={styles.disclaimerText}>
+                Note: A 2-hour buffer is required for car maintenance and
+                preparation.
+              </Text>
+            </View>
             <View style={styles.timePickerRow}>
               <ScrollView
+                ref={hourScrollRef}
                 style={styles.timePicker}
                 showsVerticalScrollIndicator={false}
+                snapToInterval={OPTION_HEIGHT}
               >
-                {hours.map((h) => (
-                  <Pressable
-                    key={h}
-                    style={[
-                      styles.timeOption,
-                      time.hour === h && styles.timeOptionActive,
-                    ]}
-                    onPress={() => updateTime(editingTime, "hour", h)}
-                  >
-                    <Text
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => {
+                  const disabled = isTimeDisabled(h, time.minute, time.period);
+                  return (
+                    <Pressable
+                      key={h}
+                      disabled={disabled}
                       style={[
-                        styles.timeOptionText,
-                        time.hour === h && styles.timeOptionTextActive,
+                        styles.timeOption,
+                        time.hour === h && styles.timeOptionActive,
+                        disabled && { opacity: 0.15 },
                       ]}
+                      onPress={() => setTime((p) => ({ ...p, hour: h }))}
                     >
-                      {String(h).padStart(2, "0")}
-                    </Text>
-                  </Pressable>
-                ))}
+                      <Text
+                        style={[
+                          styles.timeOptionText,
+                          time.hour === h && styles.timeOptionTextActive,
+                        ]}
+                      >
+                        {String(h).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </ScrollView>
-
               <Text style={styles.timeSeparator}>:</Text>
-
               <ScrollView
+                ref={minuteScrollRef}
                 style={styles.timePicker}
                 showsVerticalScrollIndicator={false}
+                snapToInterval={OPTION_HEIGHT}
               >
-                {minutes.map((m) => (
-                  <Pressable
-                    key={m}
-                    style={[
-                      styles.timeOption,
-                      time.minute === m && styles.timeOptionActive,
-                    ]}
-                    onPress={() => updateTime(editingTime, "minute", m)}
-                  >
-                    <Text
+                {Array.from({ length: 12 }, (_, i) => i * 5).map((m) => {
+                  const disabled = isTimeDisabled(time.hour, m, time.period);
+                  return (
+                    <Pressable
+                      key={m}
+                      disabled={disabled}
                       style={[
-                        styles.timeOptionText,
-                        time.minute === m && styles.timeOptionTextActive,
+                        styles.timeOption,
+                        time.minute === m && styles.timeOptionActive,
+                        disabled && { opacity: 0.15 },
                       ]}
+                      onPress={() => setTime((p) => ({ ...p, minute: m }))}
                     >
-                      {String(m).padStart(2, "0")}
-                    </Text>
-                  </Pressable>
-                ))}
+                      <Text
+                        style={[
+                          styles.timeOptionText,
+                          time.minute === m && styles.timeOptionTextActive,
+                        ]}
+                      >
+                        {String(m).padStart(2, "0")}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </ScrollView>
-
               <View style={styles.periodPicker}>
-                <Pressable
-                  style={[
-                    styles.periodBtn,
-                    time.period === "am" && styles.periodBtnActive,
-                  ]}
-                  onPress={() => updateTime(editingTime, "period", "am")}
-                >
-                  <Text
-                    style={[
-                      styles.periodText,
-                      time.period === "am" && styles.periodTextActive,
-                    ]}
-                  >
-                    AM
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[
-                    styles.periodBtn,
-                    time.period === "pm" && styles.periodBtnActive,
-                  ]}
-                  onPress={() => updateTime(editingTime, "period", "pm")}
-                >
-                  <Text
-                    style={[
-                      styles.periodText,
-                      time.period === "pm" && styles.periodTextActive,
-                    ]}
-                  >
-                    PM
-                  </Text>
-                </Pressable>
+                {["am", "pm"].map((p) => {
+                  const disabled = isTimeDisabled(time.hour, time.minute, p);
+                  return (
+                    <Pressable
+                      key={p}
+                      disabled={disabled}
+                      style={[
+                        styles.periodBtn,
+                        time.period === p && styles.periodBtnActive,
+                        disabled && { opacity: 0.15 },
+                      ]}
+                      onPress={() =>
+                        setTime((prev) => ({
+                          ...prev,
+                          period: p as "am" | "pm",
+                        }))
+                      }
+                    >
+                      <Text
+                        style={[
+                          styles.periodText,
+                          time.period === p && styles.periodTextActive,
+                        ]}
+                      >
+                        {p.toUpperCase()}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             </View>
-
-            <View style={styles.actions}>
-              <Pressable
-                style={styles.btnCancel}
-                onPress={() => setEditingTime(null)}
-              >
-                <Text style={styles.btnCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={styles.btnDone}
-                onPress={() => setEditingTime(null)}
-              >
-                <Text style={styles.btnDoneText}>Done</Text>
-              </Pressable>
-            </View>
+            <Pressable
+              style={styles.btnDoneWide}
+              onPress={() => setEditingTime(false)}
+            >
+              <Text style={styles.btnDoneText}>Confirm Time</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -315,91 +288,105 @@ export default function CustomCalendar({
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
         <View style={styles.container}>
-          <Text style={styles.title}>Time</Text>
+          <Text style={styles.title}>{mode} Time</Text>
+          <Pressable
+            style={styles.timeBox}
+            onPress={() => setEditingTime(true)}
+          >
+            <Feather name="clock" size={16} color={COLORS.white} />
+            <Text style={styles.timeText}>
+              {String(time.hour).padStart(2, "0")}:
+              {String(time.minute).padStart(2, "0")} {time.period.toUpperCase()}
+            </Text>
+          </Pressable>
 
-          <View style={styles.timeRow}>
-            <Pressable
-              style={[styles.timeBox, styles.timeBoxActive]}
-              onPress={() => setEditingTime("pickup")}
-            >
-              <Feather name="clock" size={16} color={COLORS.white} />
-              <Text style={styles.timeColon}>:</Text>
-              <Text style={styles.timeText}>
-                {String(pickupTime.hour).padStart(2, "0")}
-              </Text>
-              <Text style={styles.timeColon}>:</Text>
-              <Text style={styles.timeText}>
-                {String(pickupTime.minute).padStart(2, "0")}
-              </Text>
-              <Text style={styles.timePeriod}>{pickupTime.period}</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.timeBox}
-              onPress={() => setEditingTime("dropoff")}
-            >
-              <Feather name="clock" size={16} color={COLORS.text} />
-              <Text style={[styles.timeColon, { color: COLORS.text }]}>:</Text>
-              <Text style={[styles.timeText, { color: COLORS.text }]}>
-                {String(dropoffTime.hour).padStart(2, "0")}
-              </Text>
-              <Text style={[styles.timeColon, { color: COLORS.text }]}>:</Text>
-              <Text style={[styles.timeText, { color: COLORS.text }]}>
-                {String(dropoffTime.minute).padStart(2, "0")}
-              </Text>
-              <Text style={[styles.timePeriod, { color: COLORS.text }]}>
-                {dropoffTime.period}
-              </Text>
-            </Pressable>
-          </View>
-
+          <Text style={[styles.title, { marginTop: 24 }]}>{mode} Date</Text>
           <View style={styles.monthHeader}>
-            <Pressable onPress={prevMonth} style={styles.navBtn} hitSlop={8}>
-              <Feather name="chevron-left" size={20} color={COLORS.text} />
+            <Pressable
+              onPress={() =>
+                setCurrentMonth(
+                  new Date(
+                    currentMonth.getFullYear(),
+                    currentMonth.getMonth() - 1
+                  )
+                )
+              }
+              hitSlop={10}
+            >
+              <Feather name="chevron-left" size={20} />
             </Pressable>
             <Text style={styles.monthText}>
               {MONTHS[currentMonth.getMonth()]} {currentMonth.getFullYear()}
             </Text>
-            <Pressable onPress={nextMonth} style={styles.navBtn} hitSlop={8}>
-              <Feather name="chevron-right" size={20} color={COLORS.text} />
+            <Pressable
+              onPress={() =>
+                setCurrentMonth(
+                  new Date(
+                    currentMonth.getFullYear(),
+                    currentMonth.getMonth() + 1
+                  )
+                )
+              }
+              hitSlop={10}
+            >
+              <Feather name="chevron-right" size={20} />
             </Pressable>
           </View>
 
           <View style={styles.daysHeader}>
-            {DAYS.map((day) => (
-              <Text key={day} style={styles.dayLabel}>
-                {day}
+            {DAYS.map((d) => (
+              <Text key={d} style={styles.dayLabel}>
+                {d}
               </Text>
             ))}
           </View>
-
           <View style={styles.calendar}>
             {calendarDays.map(({ day, isCurrentMonth, date }, idx) => {
-              const inRange = isInRange(date);
-              const isPickupDay = isPickup(date);
-              const isDropoffDay = isDropoff(date);
-              const isSelected = isPickupDay || isDropoffDay;
+              const checkDate = new Date(date).setHours(0, 0, 0, 0);
+              const todayVal = new Date().setHours(0, 0, 0, 0);
+              const limit = minDate
+                ? new Date(minDate).setHours(0, 0, 0, 0)
+                : todayVal;
+
+              const isSelected =
+                selectedDate?.toDateString() === date.toDateString();
+              const isToday = new Date().toDateString() === date.toDateString();
+              const isPast = checkDate < limit;
+              const isUnavailable = disabledDates.some(
+                (d) => d.toDateString() === date.toDateString()
+              );
+              const isDisabled = isPast || isUnavailable || !isCurrentMonth;
 
               return (
                 <Pressable
                   key={idx}
                   style={[
                     styles.dayCell,
-                    inRange && styles.dayCellInRange,
                     isSelected && styles.dayCellSelected,
+                    isToday && !isSelected && styles.todayBorder,
                   ]}
-                  onPress={() => handleDayPress(date, isCurrentMonth)}
-                  disabled={!isCurrentMonth}
+                  onPress={() => !isDisabled && setSelectedDate(date)}
+                  disabled={isDisabled}
                 >
                   <Text
                     style={[
                       styles.dayText,
                       !isCurrentMonth && styles.dayTextFaded,
+                      isPast && isCurrentMonth && { color: "#e0e0e0" },
+                      isUnavailable && isCurrentMonth && { color: "#ccc" },
                       isSelected && styles.dayTextSelected,
+                      isToday &&
+                        !isSelected && {
+                          color: COLORS.black,
+                          fontWeight: "800",
+                        },
                     ]}
                   >
                     {String(day).padStart(2, "0")}
                   </Text>
+                  {isUnavailable && isCurrentMonth && (
+                    <View style={styles.disabledStrike} />
+                  )}
                 </Pressable>
               );
             })}
@@ -410,9 +397,9 @@ export default function CustomCalendar({
               <Text style={styles.btnCancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[styles.btnDone, !pickupDate && styles.btnDisabled]}
+              style={[styles.btnDone, !selectedDate && styles.btnDisabled]}
               onPress={handleDone}
-              disabled={!pickupDate}
+              disabled={!selectedDate}
             >
               <Text style={styles.btnDoneText}>Done</Text>
             </Pressable>
@@ -436,191 +423,125 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 24,
     width: "100%",
-    maxWidth: 420,
-    maxHeight: "90%",
+    maxWidth: 380,
   },
   title: {
-    fontSize: 20,
+    fontSize: 13,
     fontWeight: "700",
     color: COLORS.text,
-    marginBottom: 20,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
-  timeRow: {
+  disclaimerBox: {
     flexDirection: "row",
-    gap: 16,
-    marginBottom: 24,
+    backgroundColor: "#F9F9F9",
+    padding: 10,
+    borderRadius: 10,
+    gap: 8,
+    marginBottom: 16,
+    alignItems: "center",
   },
+  disclaimerText: { fontSize: 11, color: "#888", flex: 1, lineHeight: 14 },
   timeBox: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: COLORS.bg,
-  },
-  timeBoxActive: {
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
     backgroundColor: COLORS.black,
   },
-  timeColon: {
-    fontSize: 16,
-    fontWeight: "400",
-    color: COLORS.white,
-  },
-  timeText: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: COLORS.white,
-  },
-  timePeriod: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.white,
-    marginLeft: 4,
-  },
+  timeText: { fontSize: 16, fontWeight: "600", color: COLORS.white },
   monthHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 15,
+    marginTop: 5,
   },
-  navBtn: {
-    padding: 4,
-  },
-  monthText: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
-  daysHeader: {
-    flexDirection: "row",
-    marginBottom: 12,
-  },
+  monthText: { fontSize: 16, fontWeight: "700" },
+  daysHeader: { flexDirection: "row", marginBottom: 10 },
   dayLabel: {
     width: `${100 / 7}%`,
     textAlign: "center",
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "600",
-    color: COLORS.text,
+    color: "#aaa",
   },
-  calendar: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    marginBottom: 24,
-  },
+  calendar: { flexDirection: "row", flexWrap: "wrap", marginBottom: 20 },
   dayCell: {
     width: `${100 / 7}%`,
     aspectRatio: 1,
     justifyContent: "center",
     alignItems: "center",
-    marginVertical: 2,
+    position: "relative",
   },
-  dayCellInRange: {
-    backgroundColor: "#F0F0F0",
+  dayCellSelected: { backgroundColor: COLORS.black, borderRadius: 100 },
+  todayBorder: {
+    borderWidth: 1.5,
+    borderColor: COLORS.black,
+    borderRadius: 100,
   },
-  dayCellSelected: {
-    backgroundColor: COLORS.black,
-    borderRadius: 50,
-  },
-  dayText: {
-    fontSize: 15,
-    fontWeight: "500",
-    color: COLORS.text,
-  },
-  dayTextFaded: {
-    color: "#CCCCCC",
-  },
-  dayTextSelected: {
-    color: COLORS.white,
-    fontWeight: "700",
+  dayText: { fontSize: 14, fontWeight: "500", textAlign: "center" },
+  dayTextFaded: { color: "#f5f5f5" },
+  dayTextSelected: { color: COLORS.white, fontWeight: "700" },
+  disabledStrike: {
+    position: "absolute",
+    width: "40%",
+    height: 1.5,
+    backgroundColor: "#bbb",
+    transform: [{ rotate: "-45deg" }],
+    top: "48%",
+    left: "30%",
   },
   timePickerRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 16,
-    marginBottom: 24,
+    gap: 10,
+    height: 180,
+    marginBottom: 20,
   },
-  timePicker: {
-    flex: 1,
-    maxHeight: 200,
-  },
-  timeSeparator: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
+  timePicker: { flex: 1 },
+  timeSeparator: { fontSize: 20, fontWeight: "700" },
   timeOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    height: OPTION_HEIGHT,
+    justifyContent: "center",
     borderRadius: 8,
-    marginVertical: 4,
-    backgroundColor: COLORS.bg,
+    alignItems: "center",
   },
-  timeOptionActive: {
-    backgroundColor: COLORS.black,
-  },
-  timeOptionText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: COLORS.text,
-    textAlign: "center",
-  },
-  timeOptionTextActive: {
-    color: COLORS.white,
-  },
-  periodPicker: {
-    gap: 8,
-  },
-  periodBtn: {
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: COLORS.bg,
-  },
-  periodBtnActive: {
-    backgroundColor: COLORS.black,
-  },
-  periodText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
-  periodTextActive: {
-    color: COLORS.white,
-  },
-  actions: {
-    flexDirection: "row",
-    gap: 16,
-  },
+  timeOptionActive: { backgroundColor: COLORS.black },
+  timeOptionText: { fontSize: 16, color: COLORS.text },
+  timeOptionTextActive: { color: COLORS.white, fontWeight: "700" },
+  periodPicker: { gap: 8 },
+  periodBtn: { padding: 12, borderRadius: 10, backgroundColor: "#f5f5f5" },
+  periodBtnActive: { backgroundColor: COLORS.black },
+  periodText: { fontSize: 12, fontWeight: "700", color: COLORS.text },
+  periodTextActive: { color: COLORS.white },
+  actions: { flexDirection: "row", gap: 12 },
   btnCancel: {
     flex: 1,
-    paddingVertical: 16,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: COLORS.border,
+    padding: 14,
+    borderRadius: 14,
     alignItems: "center",
-    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
-  btnCancelText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
+  btnCancelText: { fontWeight: "700", color: COLORS.text },
   btnDone: {
     flex: 1,
-    paddingVertical: 16,
-    borderRadius: 16,
+    padding: 14,
+    borderRadius: 14,
     backgroundColor: COLORS.black,
     alignItems: "center",
   },
-  btnDisabled: {
-    opacity: 0.5,
+  btnDoneWide: {
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: COLORS.black,
+    alignItems: "center",
+    width: "100%",
   },
-  btnDoneText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: COLORS.white,
-  },
+  btnDoneText: { color: COLORS.white, fontWeight: "700", fontSize: 15 },
+  btnDisabled: { opacity: 0.2 },
 });
