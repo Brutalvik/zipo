@@ -41,7 +41,14 @@ declare global {
 
     /** Account status flags (future-proof) */
     status?: "active" | "suspended" | "deleted";
-    kycStatus?: "pending" | "verified" | "rejected";
+    kycStatus?:
+      | "not_started"
+      | "incomplete"
+      | "pending"
+      | "verified"
+      | "approved"
+      | "rejected"
+      | "expired";
 
     /** Metadata */
     created_at?: string;

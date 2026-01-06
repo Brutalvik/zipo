@@ -16,6 +16,7 @@ type CalendarProps = {
   onSelect: (pickup: Date, dropoff: Date) => void;
   initialPickup?: Date;
   initialDropoff?: Date;
+  mode?: "pickup" | "return";
 };
 
 const MONTHS = [
@@ -41,6 +42,7 @@ export default function CustomCalendar({
   onSelect,
   initialPickup,
   initialDropoff,
+  mode = "pickup",
 }: CalendarProps) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [pickupDate, setPickupDate] = useState<Date | null>(
@@ -49,15 +51,18 @@ export default function CustomCalendar({
   const [dropoffDate, setDropoffDate] = useState<Date | null>(
     initialDropoff || null
   );
+  const [editingTime, setEditingTime] = useState<"pickup" | "dropoff" | null>(
+    null
+  );
   const [pickupTime, setPickupTime] = useState({
-    hour: 10,
-    minute: 30,
-    period: "am",
+    hour: (initialPickup?.getHours() ?? 10) % 12 || 10,
+    minute: initialPickup?.getMinutes() ?? 30,
+    period: (initialPickup?.getHours() ?? 10) >= 12 ? "pm" : "am",
   });
   const [dropoffTime, setDropoffTime] = useState({
-    hour: 5,
-    minute: 30,
-    period: "pm",
+    hour: (initialDropoff?.getHours() ?? 17) % 12 || 5,
+    minute: initialDropoff?.getMinutes() ?? 30,
+    period: (initialDropoff?.getHours() ?? 17) >= 12 ? "pm" : "am",
   });
 
   const calendarDays = useMemo(() => {
@@ -68,7 +73,6 @@ export default function CustomCalendar({
     const prevMonthDays = new Date(year, month, 0).getDate();
     const days: { day: number; isCurrentMonth: boolean; date: Date }[] = [];
 
-    // Previous month days
     for (let i = firstDay - 1; i >= 0; i--) {
       const day = prevMonthDays - i;
       days.push({
@@ -78,7 +82,6 @@ export default function CustomCalendar({
       });
     }
 
-    // Current month days
     for (let i = 1; i <= daysInMonth; i++) {
       days.push({
         day: i,
@@ -87,7 +90,6 @@ export default function CustomCalendar({
       });
     }
 
-    // Next month days to fill the grid
     const remainingDays = 42 - days.length;
     for (let i = 1; i <= remainingDays; i++) {
       days.push({
@@ -103,11 +105,16 @@ export default function CustomCalendar({
   const handleDayPress = (date: Date, isCurrentMonth: boolean) => {
     if (!isCurrentMonth) return;
 
-    if (!pickupDate || (pickupDate && dropoffDate)) {
+    if (mode === "pickup" || !pickupDate) {
       setPickupDate(date);
       setDropoffDate(null);
-    } else if (date >= pickupDate) {
-      setDropoffDate(date);
+    } else if (!dropoffDate) {
+      if (date >= pickupDate) {
+        setDropoffDate(date);
+      } else {
+        setPickupDate(date);
+        setDropoffDate(null);
+      }
     } else {
       setPickupDate(date);
       setDropoffDate(null);
@@ -128,30 +135,36 @@ export default function CustomCalendar({
   };
 
   const handleDone = () => {
-    if (pickupDate && dropoffDate) {
-      const pickup = new Date(pickupDate);
-      pickup.setHours(
-        pickupTime.period === "pm" && pickupTime.hour !== 12
-          ? pickupTime.hour + 12
-          : pickupTime.hour === 12 && pickupTime.period === "am"
-          ? 0
-          : pickupTime.hour,
-        pickupTime.minute
-      );
+    const finalPickup = pickupDate || new Date();
+    const finalDropoff =
+      dropoffDate || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
 
-      const dropoff = new Date(dropoffDate);
-      dropoff.setHours(
-        dropoffTime.period === "pm" && dropoffTime.hour !== 12
-          ? dropoffTime.hour + 12
-          : dropoffTime.hour === 12 && dropoffTime.period === "am"
-          ? 0
-          : dropoffTime.hour,
-        dropoffTime.minute
-      );
+    const pickup = new Date(finalPickup);
+    pickup.setHours(
+      pickupTime.period === "pm" && pickupTime.hour !== 12
+        ? pickupTime.hour + 12
+        : pickupTime.hour === 12 && pickupTime.period === "am"
+        ? 0
+        : pickupTime.hour,
+      pickupTime.minute,
+      0,
+      0
+    );
 
-      onSelect(pickup, dropoff);
-      onClose();
-    }
+    const dropoff = new Date(finalDropoff);
+    dropoff.setHours(
+      dropoffTime.period === "pm" && dropoffTime.hour !== 12
+        ? dropoffTime.hour + 12
+        : dropoffTime.hour === 12 && dropoffTime.period === "am"
+        ? 0
+        : dropoffTime.hour,
+      dropoffTime.minute,
+      0,
+      0
+    );
+
+    onSelect(pickup, dropoff);
+    onClose();
   };
 
   const prevMonth = () => {
@@ -166,6 +179,138 @@ export default function CustomCalendar({
     );
   };
 
+  const updateTime = (
+    type: "pickup" | "dropoff",
+    field: "hour" | "minute" | "period",
+    value: number | string
+  ) => {
+    if (type === "pickup") {
+      setPickupTime((prev) => ({ ...prev, [field]: value }));
+    } else {
+      setDropoffTime((prev) => ({ ...prev, [field]: value }));
+    }
+  };
+
+  if (editingTime) {
+    const time = editingTime === "pickup" ? pickupTime : dropoffTime;
+    const hours = Array.from({ length: 12 }, (_, i) => i + 1);
+    const minutes = Array.from({ length: 60 }, (_, i) => i);
+
+    return (
+      <Modal visible={visible} transparent animationType="fade">
+        <View style={styles.overlay}>
+          <View style={styles.container}>
+            <Text style={styles.title}>Select Time</Text>
+
+            <View style={styles.timePickerRow}>
+              <ScrollView
+                style={styles.timePicker}
+                showsVerticalScrollIndicator={false}
+              >
+                {hours.map((h) => (
+                  <Pressable
+                    key={h}
+                    style={[
+                      styles.timeOption,
+                      time.hour === h && styles.timeOptionActive,
+                    ]}
+                    onPress={() => updateTime(editingTime, "hour", h)}
+                  >
+                    <Text
+                      style={[
+                        styles.timeOptionText,
+                        time.hour === h && styles.timeOptionTextActive,
+                      ]}
+                    >
+                      {String(h).padStart(2, "0")}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              <Text style={styles.timeSeparator}>:</Text>
+
+              <ScrollView
+                style={styles.timePicker}
+                showsVerticalScrollIndicator={false}
+              >
+                {minutes.map((m) => (
+                  <Pressable
+                    key={m}
+                    style={[
+                      styles.timeOption,
+                      time.minute === m && styles.timeOptionActive,
+                    ]}
+                    onPress={() => updateTime(editingTime, "minute", m)}
+                  >
+                    <Text
+                      style={[
+                        styles.timeOptionText,
+                        time.minute === m && styles.timeOptionTextActive,
+                      ]}
+                    >
+                      {String(m).padStart(2, "0")}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              <View style={styles.periodPicker}>
+                <Pressable
+                  style={[
+                    styles.periodBtn,
+                    time.period === "am" && styles.periodBtnActive,
+                  ]}
+                  onPress={() => updateTime(editingTime, "period", "am")}
+                >
+                  <Text
+                    style={[
+                      styles.periodText,
+                      time.period === "am" && styles.periodTextActive,
+                    ]}
+                  >
+                    AM
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.periodBtn,
+                    time.period === "pm" && styles.periodBtnActive,
+                  ]}
+                  onPress={() => updateTime(editingTime, "period", "pm")}
+                >
+                  <Text
+                    style={[
+                      styles.periodText,
+                      time.period === "pm" && styles.periodTextActive,
+                    ]}
+                  >
+                    PM
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.actions}>
+              <Pressable
+                style={styles.btnCancel}
+                onPress={() => setEditingTime(null)}
+              >
+                <Text style={styles.btnCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.btnDone}
+                onPress={() => setEditingTime(null)}
+              >
+                <Text style={styles.btnDoneText}>Done</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
@@ -173,7 +318,10 @@ export default function CustomCalendar({
           <Text style={styles.title}>Time</Text>
 
           <View style={styles.timeRow}>
-            <View style={[styles.timeBox, styles.timeBoxActive]}>
+            <Pressable
+              style={[styles.timeBox, styles.timeBoxActive]}
+              onPress={() => setEditingTime("pickup")}
+            >
               <Feather name="clock" size={16} color={COLORS.white} />
               <Text style={styles.timeColon}>:</Text>
               <Text style={styles.timeText}>
@@ -184,9 +332,12 @@ export default function CustomCalendar({
                 {String(pickupTime.minute).padStart(2, "0")}
               </Text>
               <Text style={styles.timePeriod}>{pickupTime.period}</Text>
-            </View>
+            </Pressable>
 
-            <View style={styles.timeBox}>
+            <Pressable
+              style={styles.timeBox}
+              onPress={() => setEditingTime("dropoff")}
+            >
               <Feather name="clock" size={16} color={COLORS.text} />
               <Text style={[styles.timeColon, { color: COLORS.text }]}>:</Text>
               <Text style={[styles.timeText, { color: COLORS.text }]}>
@@ -199,7 +350,7 @@ export default function CustomCalendar({
               <Text style={[styles.timePeriod, { color: COLORS.text }]}>
                 {dropoffTime.period}
               </Text>
-            </View>
+            </Pressable>
           </View>
 
           <View style={styles.monthHeader}>
@@ -259,12 +410,9 @@ export default function CustomCalendar({
               <Text style={styles.btnCancelText}>Cancel</Text>
             </Pressable>
             <Pressable
-              style={[
-                styles.btnDone,
-                (!pickupDate || !dropoffDate) && styles.btnDisabled,
-              ]}
+              style={[styles.btnDone, !pickupDate && styles.btnDisabled]}
               onPress={handleDone}
-              disabled={!pickupDate || !dropoffDate}
+              disabled={!pickupDate}
             >
               <Text style={styles.btnDoneText}>Done</Text>
             </Pressable>
@@ -289,6 +437,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: "100%",
     maxWidth: 420,
+    maxHeight: "90%",
   },
   title: {
     fontSize: 20,
@@ -386,6 +535,60 @@ const styles = StyleSheet.create({
   dayTextSelected: {
     color: COLORS.white,
     fontWeight: "700",
+  },
+  timePickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    marginBottom: 24,
+  },
+  timePicker: {
+    flex: 1,
+    maxHeight: 200,
+  },
+  timeSeparator: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  timeOption: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginVertical: 4,
+    backgroundColor: COLORS.bg,
+  },
+  timeOptionActive: {
+    backgroundColor: COLORS.black,
+  },
+  timeOptionText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.text,
+    textAlign: "center",
+  },
+  timeOptionTextActive: {
+    color: COLORS.white,
+  },
+  periodPicker: {
+    gap: 8,
+  },
+  periodBtn: {
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: COLORS.bg,
+  },
+  periodBtnActive: {
+    backgroundColor: COLORS.black,
+  },
+  periodText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  periodTextActive: {
+    color: COLORS.white,
   },
   actions: {
     flexDirection: "row",

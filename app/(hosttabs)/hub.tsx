@@ -15,6 +15,7 @@ import {
   StyleSheet,
   Text,
   View,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -114,7 +115,6 @@ function relativeTimeFromNow(ms: number) {
   return "";
 }
 
-// Completion score for “Needs attention” + per-car snapshot
 function computeCompletion(car: HostCar, photoCount: number) {
   const checks: Array<{ ok: boolean; missing: string }> = [
     { ok: !!String(car.title || "").trim(), missing: "title" },
@@ -314,6 +314,7 @@ function CarMiniRow({
     completionPct: number;
     photoCount: number;
     missing: string[];
+    imageUrl: string | null;
   };
   onPress: () => void;
 }) {
@@ -343,6 +344,9 @@ function CarMiniRow({
       : derived.missing.slice(0, 2).join(", ") +
         (derived.missing.length > 2 ? "…" : "");
 
+  const price = Number(car.price_per_day || 0);
+  const currency = String(car.currency || "CAD");
+
   return (
     <Pressable
       onPress={onPress}
@@ -351,6 +355,14 @@ function CarMiniRow({
         pressed ? { opacity: 0.92 } : null,
       ]}
     >
+      {derived.imageUrl ? (
+        <Image source={{ uri: derived.imageUrl }} style={styles.carThumb} />
+      ) : (
+        <View style={[styles.carThumb, styles.carThumbPlaceholder]}>
+          <Feather name="image" size={20} color="rgba(17,24,39,0.3)" />
+        </View>
+      )}
+
       <View style={{ flex: 1 }}>
         <View style={styles.carMiniTop}>
           <Text style={styles.carMiniTitle} numberOfLines={1}>
@@ -359,20 +371,21 @@ function CarMiniRow({
           <Pill label={statusLabel} tone={statusTone as any} />
         </View>
 
+        {price > 0 && (
+          <Text style={styles.carPrice}>
+            ${price.toFixed(0)}/{currency === "CAD" ? "day" : "day"}
+          </Text>
+        )}
+
         <View style={styles.carMiniMetaRow}>
-          <Pill label={`Complete ${derived.completionPct}%`} tone="muted" />
-          <Pill
-            label={`Photos ${derived.photoCount}`}
-            tone="muted"
-            icon="camera"
-          />
-          {derived.updatedRel ? (
+          <Pill label={`${derived.completionPct}%`} tone="muted" />
+          {derived.photoCount > 0 && (
             <Pill
-              label={`Updated ${derived.updatedRel}`}
+              label={`${derived.photoCount} photos`}
               tone="muted"
-              icon="clock"
+              icon="camera"
             />
-          ) : null}
+          )}
         </View>
 
         {missingShort ? (
@@ -392,7 +405,7 @@ export default function HostHubScreen() {
   const dispatch = useAppDispatch();
 
   const user = useAppSelector((s) => s.auth.user);
-  const hostState = useAppSelector((s: any) => s.host); // keep flexible
+  const hostState = useAppSelector((s: any) => s.host);
   const host = hostState?.host ?? null;
   const hostLoading = hostState?.loading ?? false;
 
@@ -400,11 +413,9 @@ export default function HostHubScreen() {
   const [carsLoading, setCarsLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Keep request safe (avoid double fetch / stale)
   const fetchingCarsRef = useRef(false);
 
   useEffect(() => {
-    // If user is not in host mode, don't allow host tabs
     if (user?.mode !== "host") {
       router.replace("/(app)");
       return;
@@ -415,19 +426,15 @@ export default function HostHubScreen() {
   useEffect(() => {
     if (hostLoading) return;
 
-    // No host row yet -> send to host-program
     if (!host) {
       router.replace("/(app)/host-program");
       return;
     }
 
-    // Host exists but draft -> send to onboarding
     if (host?.status === "draft") {
       router.replace("/(app)/host-onboarding");
       return;
     }
-
-    // Otherwise stay on hub
   }, [host, hostLoading, router]);
 
   const fetchCars = useCallback(async (opts: { silent?: boolean } = {}) => {
@@ -439,9 +446,6 @@ export default function HostHubScreen() {
 
     try {
       const token = await getIdToken();
-
-      // We only need enough to build dashboard signals.
-      // If you can add a /api/host/cars/summary endpoint later, we’ll switch to that.
       const limit = 100;
       const res = await fetch(
         `${API_BASE}/api/host/cars?limit=${encodeURIComponent(
@@ -466,7 +470,6 @@ export default function HostHubScreen() {
   }, []);
 
   useEffect(() => {
-    // Only fetch cars once host is confirmed active/approved
     if (hostLoading) return;
     if (!host) return;
     if (host?.status === "draft") return;
@@ -484,17 +487,12 @@ export default function HostHubScreen() {
     });
   }, [fetchCars]);
 
-  // Derived stats + “needs attention”
   const derived = useMemo(() => {
     let active = 0;
     let draft = 0;
-
-    // Attention signals
     let missingPhotos = 0;
     let missingPrice = 0;
     let incompleteListings = 0;
-
-    // Car snapshot (top by updated)
 
     const enriched = cars.map((c) => {
       const urls = getGalleryUrls(c);
@@ -510,6 +508,7 @@ export default function HostHubScreen() {
       if (photoCount === 0) missingPhotos++;
       if (Number(c.price_per_day || 0) <= 0) missingPrice++;
       if (completion.pct < 90) incompleteListings++;
+
       return {
         car: c,
         status: st,
@@ -518,6 +517,7 @@ export default function HostHubScreen() {
         completionPct: completion.pct,
         missing: completion.missing,
         photoCount,
+        imageUrl: urls[0] || null,
       };
     });
 
@@ -579,7 +579,6 @@ export default function HostHubScreen() {
       });
     }
 
-    // Availability is not in cars list response currently, so we keep it helpful but honest.
     out.push({
       key: "availability",
       title: "Set availability",
@@ -602,7 +601,6 @@ export default function HostHubScreen() {
       "A clear title and location helps guests trust your listing.",
     ];
 
-    // deterministic pick based on day
     const idx = new Date().getDate() % pool.length;
     return pool[idx];
   }, []);
@@ -614,7 +612,6 @@ export default function HostHubScreen() {
   );
 
   const goAvailability = useCallback(() => {
-    // For now, route to cars list (later to a dedicated availability manager)
     router.push("/(hosttabs)/cars");
   }, [router]);
 
@@ -655,7 +652,6 @@ export default function HostHubScreen() {
     );
   }
 
-  // If host is null or draft, router will replace — but render something safe anyway
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
       <ScrollView
@@ -665,7 +661,6 @@ export default function HostHubScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Header */}
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.h1}>Hub</Text>
@@ -684,7 +679,6 @@ export default function HostHubScreen() {
           </Pressable>
         </View>
 
-        {/* Month summary */}
         <SectionHeader
           title="This month"
           right={
@@ -746,7 +740,6 @@ export default function HostHubScreen() {
           />
         </View>
 
-        {/* Needs attention */}
         <SectionHeader title="Needs attention" />
         <View style={styles.sectionCard}>
           {carsLoading ? (
@@ -779,7 +772,6 @@ export default function HostHubScreen() {
           )}
         </View>
 
-        {/* Upcoming activity */}
         <SectionHeader title="Upcoming activity" />
         <View style={styles.sectionCard}>
           <View style={styles.emptyTrips}>
@@ -791,7 +783,6 @@ export default function HostHubScreen() {
           </View>
         </View>
 
-        {/* Your cars snapshot */}
         <SectionHeader
           title="Your cars"
           right={
@@ -828,6 +819,7 @@ export default function HostHubScreen() {
                     completionPct: x.completionPct,
                     photoCount: x.photoCount,
                     missing: x.missing,
+                    imageUrl: x.imageUrl,
                   }}
                   onPress={() =>
                     router.push({
@@ -863,7 +855,6 @@ export default function HostHubScreen() {
           )}
         </View>
 
-        {/* Quick actions (1 to 6 requirement) */}
         <SectionHeader title="Quick actions" />
         <View style={styles.actionsGrid}>
           <ActionTile label="Add car" icon="plus" onPress={goAddCar} />
@@ -886,7 +877,6 @@ export default function HostHubScreen() {
           <ActionTile label="Support" icon="help-circle" onPress={goSupport} />
         </View>
 
-        {/* Tips (simple + dismissible later) */}
         <SectionHeader title="Tip" />
         <View style={styles.tipCard}>
           <View style={styles.tipIcon}>
@@ -965,7 +955,6 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.55)",
   },
 
-  // Stats grid
   statsGrid: {
     marginTop: 10,
     flexDirection: "row",
@@ -1018,7 +1007,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
-  // Cards
   sectionCard: {
     marginTop: 10,
     backgroundColor: "#FFFFFF",
@@ -1034,7 +1022,6 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
 
-  // Pills
   pill: {
     flexDirection: "row",
     alignItems: "center",
@@ -1089,7 +1076,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
-  // Attention rows
   attnRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1131,7 +1117,6 @@ const styles = StyleSheet.create({
 
   attnRight: { flexDirection: "row", alignItems: "center", gap: 10 },
 
-  // Upcoming activity empty
   emptyTrips: {
     paddingTop: 10,
     paddingBottom: 6,
@@ -1140,12 +1125,23 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
-  // Cars snapshot
   carMiniRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+  },
+
+  carThumb: {
+    width: 64,
+    height: 64,
+    borderRadius: 12,
+    backgroundColor: "rgba(17,24,39,0.05)",
+  },
+
+  carThumbPlaceholder: {
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   carMiniTop: {
@@ -1162,6 +1158,13 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
+  carPrice: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "800",
+    color: "rgba(17,24,39,0.60)",
+  },
+
   carMiniMetaRow: {
     marginTop: 8,
     flexDirection: "row",
@@ -1176,7 +1179,6 @@ const styles = StyleSheet.create({
     color: "rgba(185, 28, 28, 0.70)",
   },
 
-  // Empty cars
   emptyCars: {
     paddingTop: 10,
     paddingBottom: 6,
@@ -1220,7 +1222,6 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  // Actions grid
   actionsGrid: {
     marginTop: 10,
     flexDirection: "row",
@@ -1259,7 +1260,6 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  // Tip
   tipCard: {
     marginTop: 10,
     backgroundColor: "#FFFFFF",

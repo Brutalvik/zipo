@@ -104,7 +104,7 @@ export const fetchCars = createAsyncThunk<
     // Here we treat res.items as CarApi[]
     const apiItems = (res.items ?? []) as CarApi[];
     const items = apiItems.map(mapCarApiToCar);
-    console.log("Fetched cars:", items);
+    // console.log("Fetched cars:", items);
 
     const page: Page = res.page
       ? {
