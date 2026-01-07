@@ -7,6 +7,99 @@ import type {
   CarItemResponse,
   CarsItemsResponse,
 } from "@/types/carApi";
+import { HostCar } from "@/types/car";
+
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
+
+/** Fetch single car by ID with auth */
+export async function fetchHostCar(
+  carId: string,
+  token: string
+): Promise<HostCar> {
+  if (!carId) throw new Error("Missing carId");
+  if (!token) throw new Error("Missing auth token");
+
+  const res = await fetch(
+    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "Failed to fetch car");
+
+  const json = JSON.parse(text);
+  const car: HostCar | null = json?.car ?? null;
+  if (!car) throw new Error("Car not found");
+  return car;
+}
+
+/** Patch host car */
+export async function patchHostCar(
+  carId: string,
+  token: string,
+  body: Partial<HostCar>
+) {
+  if (!carId) throw new Error("Missing carId");
+  if (!token) throw new Error("Missing auth token");
+
+  const res = await fetch(
+    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+    }
+  );
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "Failed to update car");
+
+  const json = JSON.parse(text);
+  return json?.car;
+}
+
+/** Publish host car */
+export async function publishHostCar(carId: string, token: string) {
+  if (!carId) throw new Error("Missing carId");
+  if (!token) throw new Error("Missing auth token");
+
+  const res = await fetch(
+    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}/publish`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "Failed to publish car");
+
+  const json = JSON.parse(text);
+  return json?.car ?? true;
+}
+
+// ** Deactivate host car */
+export async function deleteHostCar(carId: string, token: string) {
+  if (!carId) throw new Error("Missing carId");
+
+  const res = await fetch(
+    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "Failed to delete car");
+
+  return true;
+}
 
 /** ===== Bounding Box Utilities ===== */
 export function getBoundingBox(lat: number, lng: number, radiusKm: number) {

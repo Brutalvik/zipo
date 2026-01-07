@@ -24,56 +24,27 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Calendar } from "react-native-calendars";
-import { auth } from "@/services/firebase";
 
 import DraggableFlatList, {
   RenderItemParams,
 } from "react-native-draggable-flatlist";
+import { HostCar } from "@/types/car";
+import { useIdToken } from "@/hooks/useIdToken";
+import {
+  deleteHostCar,
+  fetchHostCar,
+  patchHostCar,
+  publishHostCar,
+} from "@/services/carsApi";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
-
-type HostCar = {
-  id: string;
-  title?: string | null;
-  status?: string | null;
-
-  vehicle_type?: string | null;
-  transmission?: string | null;
-  seats?: number | null;
-
-  price_per_day?: number | null;
-  currency?: string | null;
-
-  country_code?: string | null;
-  city?: string | null;
-  area?: string | null;
-
-  full_address?: string | null;
-  pickup_address?: string | null;
-
-  image_path?: string | null;
-  image_gallery?: any[] | string[] | null;
-
-  odometer_km?: number | null;
-
-  features?: any; // jsonb
-  requirements?: any; // jsonb
-
-  updated_at?: string | null;
-};
 
 type FeatureItem = {
   id: string;
   label: string;
   icon: keyof typeof Feather.glyphMap;
 };
-
-async function getIdToken() {
-  const token = await auth.currentUser?.getIdToken(true);
-  if (!token) throw new Error("Missing auth token");
-  return token;
-}
 
 // -------------------------
 // URL helpers
@@ -365,6 +336,12 @@ function ImageCarousel({ urls }: { urls: string[] }) {
 export default function HostCarDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const {
+    token,
+    loading: tokenLoading,
+    error: tokenError,
+    refreshToken,
+  } = useIdToken();
   const carId = String(params?.carId || "").trim();
 
   const [car, setCar] = useState<HostCar | null>(null);
@@ -377,10 +354,6 @@ export default function HostCarDetails() {
 
   // ✅ local order for photos (UI-only reorder)
   const [galleryLocal, setGalleryLocal] = useState<string[]>([]);
-  // useEffect(() => {
-  //   setGalleryLocal(gallery);
-  //   setInitialGallery(gallery);
-  // }, [gallery]);
 
   // -------- Local editable state (NOT auto-saving) --------
   const [odoText, setOdoText] = useState("");
@@ -442,48 +415,41 @@ export default function HostCarDetails() {
 
   const loadCar = useCallback(async () => {
     if (!carId) throw new Error("Missing carId");
+    if (!token) throw new Error("Missing auth token");
+
     setLoading(true);
     try {
-      const token = await getIdToken();
-      const res = await fetch(
-        `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || "Failed to load car");
-
-      const json = JSON.parse(text);
-      const c: HostCar | null = json?.car ?? null;
+      // ✅ Fetch car via centralized API
+      const c: HostCar = await fetchHostCar(carId, token);
       setCar(c);
 
+      // === Odometer ===
       const odo = Number(c?.odometer_km ?? 0) || 0;
+      setOdoText(odo ? String(odo) : "");
 
+      // === Amenities ===
       const amenities = uniqSortedStrings(
-        Array.isArray(c?.features?.amenities) ? c!.features.amenities : []
+        Array.isArray(c?.features?.amenities) ? c.features.amenities : []
       );
+      setAmenitiesLocal(amenities);
 
+      // === Blocked dates ===
       const blocked = uniqSortedStrings(
         Array.isArray(c?.requirements?.availability?.blockedDates)
-          ? c!.requirements.availability.blockedDates
+          ? c.requirements.availability.blockedDates
           : []
       ).filter((k) => !isBeforeDateKey(k, todayKey));
-
-      // === Set all local states ===
-      setOdoText(odo ? String(odo) : "");
-      setAmenitiesLocal(amenities);
       setBlockedLocal(blocked);
 
-      // === Set initial values for dirty detection ===
+      // === Dirty detection reference ===
       initialRef.current = { odometer_km: odo, amenities, blocked };
 
-      // === CRITICAL: Set initial gallery order only once on load ===
-      const currentGallery = getGalleryUrls(c!);
+      // === Gallery ===
+      const currentGallery = getGalleryUrls(c);
       setGalleryLocal(currentGallery);
       setInitialGallery(currentGallery);
 
+      // === Reset temporary UI state ===
       setRangeStart(null);
       setRangeEnd(null);
       setDisplayRange(null);
@@ -493,7 +459,7 @@ export default function HostCarDetails() {
     } finally {
       setLoading(false);
     }
-  }, [carId, todayKey]);
+  }, [carId, token, todayKey]);
 
   useEffect(() => {
     loadCar().catch((e) => {
@@ -504,26 +470,16 @@ export default function HostCarDetails() {
 
   const patchCar = useCallback(
     async (patch: Partial<HostCar>) => {
-      const token = await getIdToken();
-      const res = await fetch(
-        `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(patch),
-        }
-      );
+      if (!carId) throw new Error("Missing carId");
 
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || "Failed to update car");
+      // Get the token from the hook
+      if (!token) throw new Error("Auth token not available");
 
-      const json = JSON.parse(text);
-      return json?.car;
+      // Use centralized API
+      const updatedCar = await patchHostCar(carId, token, patch);
+      return updatedCar;
     },
-    [carId]
+    [carId, token]
   );
 
   const saveOnly = useCallback(async () => {
@@ -601,6 +557,7 @@ export default function HostCarDetails() {
     loadCar,
     galleryLocal, // critical dependency
   ]);
+
   const onPrimaryAction = useCallback(async () => {
     if (!car) return;
 
@@ -609,31 +566,23 @@ export default function HostCarDetails() {
       return;
     }
 
+    if (!token) {
+      Alert.alert("Auth error", "Missing authentication token.");
+      return;
+    }
+
     try {
       setBusy(true);
 
       // Save changes first
-      await saveOnly();
+      await saveOnly(); // inside saveOnly, you can use patchHostCar
 
-      // Publish if draft/inactive/etc
       if (!isActive) {
-        const token = await getIdToken();
-        const res = await fetch(
-          `${API_BASE}/api/host/cars/${encodeURIComponent(car.id)}/publish`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-
-        const text = await res.text();
-        if (!res.ok) throw new Error(text || "Failed to publish");
-
-        router.replace("/(hosttabs)/cars");
-      } else {
-        Alert.alert("Updated", "Car details updated.");
-        router.replace("/(hosttabs)/cars");
+        await publishHostCar(car.id, token);
       }
+
+      Alert.alert("Updated", "Car details updated.");
+      router.replace("/(hosttabs)/cars");
     } catch (e: any) {
       const msg = e?.message || "Could not complete this action.";
       if (String(msg).includes("200,000")) {
@@ -646,7 +595,7 @@ export default function HostCarDetails() {
     } finally {
       setBusy(false);
     }
-  }, [car, isDirty, saveOnly, isActive, router]);
+  }, [car, isDirty, saveOnly, isActive, token, router]);
 
   const confirmLeave = useCallback(
     (goBack: () => void) => {
@@ -697,27 +646,21 @@ export default function HostCarDetails() {
 
     Alert.alert(
       "Deactivate car?",
-      "This will deactivate the car and remove from guest board.",
+      "This will deactivate the car and remove it from guest board.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Deactivate",
           style: "destructive",
           onPress: async () => {
+            if (!token) {
+              Alert.alert("Auth error", "Missing authentication token.");
+              return;
+            }
+
             try {
               setDeleting(true);
-              const token = await getIdToken();
-
-              const res = await fetch(
-                `${API_BASE}/api/host/cars/${encodeURIComponent(car.id)}`,
-                {
-                  method: "DELETE",
-                  headers: { Authorization: `Bearer ${token}` },
-                }
-              );
-
-              const text = await res.text();
-              if (!res.ok) throw new Error(text || "Failed to delete car");
+              await deleteHostCar(car.id, token);
 
               router.replace({
                 pathname: "/(hosttabs)/cars",
@@ -735,7 +678,7 @@ export default function HostCarDetails() {
         },
       ]
     );
-  }, [car, router]);
+  }, [car, token, router]);
 
   // ---------- SMART BLOCK/UNBLOCK ----------
   const applyRangeToggleWithAlert = useCallback(
