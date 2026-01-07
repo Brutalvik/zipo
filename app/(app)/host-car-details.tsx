@@ -667,12 +667,12 @@ export default function HostCarDetails() {
     if (!car) return;
 
     Alert.alert(
-      "Delete car?",
-      "This will delete the car and remove all its photos.",
+      "Deactivate car?",
+      "This will deactivate the car and remove from guest board.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Delete",
+          text: "Deactivate",
           style: "destructive",
           onPress: async () => {
             try {
@@ -696,8 +696,8 @@ export default function HostCarDetails() {
               });
             } catch (e: any) {
               Alert.alert(
-                "Delete failed",
-                e?.message || "Could not delete this car."
+                "Deactivation failed",
+                e?.message || "Could not deactivate this car."
               );
             } finally {
               setDeleting(false);
@@ -967,7 +967,7 @@ export default function HostCarDetails() {
           ) : (
             <>
               <Feather name="trash-2" size={16} color="#991B1B" />
-              <Text style={styles.deleteText}>Delete</Text>
+              <Text style={styles.deleteText}>Deactivate</Text>
             </>
           )}
         </Pressable>
