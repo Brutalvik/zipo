@@ -10,6 +10,9 @@ import type {
 import { HostCar } from "@/types/car";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
+if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
+
+const HOST_CARS_API_BASE = `${API_BASE}/api/host/cars`;
 
 /** Fetch single car by ID with auth */
 export async function fetchHostCar(
@@ -20,7 +23,7 @@ export async function fetchHostCar(
   if (!token) throw new Error("Missing auth token");
 
   const res = await fetch(
-    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
     {
       headers: { Authorization: `Bearer ${token}` },
     }
@@ -45,7 +48,7 @@ export async function patchHostCar(
   if (!token) throw new Error("Missing auth token");
 
   const res = await fetch(
-    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
     {
       method: "PATCH",
       headers: {
@@ -69,7 +72,7 @@ export async function publishHostCar(carId: string, token: string) {
   if (!token) throw new Error("Missing auth token");
 
   const res = await fetch(
-    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}/publish`,
+    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}/publish`,
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -88,7 +91,7 @@ export async function deleteHostCar(carId: string, token: string) {
   if (!carId) throw new Error("Missing carId");
 
   const res = await fetch(
-    `${API_BASE}/api/host/cars/${encodeURIComponent(carId)}`,
+    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
     {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
