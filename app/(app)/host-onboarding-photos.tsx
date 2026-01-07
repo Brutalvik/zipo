@@ -430,9 +430,10 @@ export default function HostOnboardingPhotosScreen() {
     setRunStats({ done: 0, total: photos.length });
 
     try {
-      // reset UI
-      for (const p of photos)
-        setPhotoState(p.id, { stage: "queued", progress: 0 });
+      // Reset UI state for all photos
+      for (const p of photos) {
+        setPhotoState(p.id, { stage: "queued", progress: 0, error: undefined });
+      }
 
       const toFinalize: Array<{
         id: string;
@@ -442,13 +443,13 @@ export default function HostOnboardingPhotosScreen() {
         height?: number;
       }> = [];
 
-      // function to process & upload one photo
+      // Helper: process and upload a single photo
       const uploadPhoto = async (raw: PickedPhoto) => {
         if (cancelRef.current) throw new Error("Upload cancelled");
 
         setPhotoState(raw.id, { stage: "requesting_url", progress: 0.03 });
 
-        // resize & convert to JPEG
+        // Resize & convert to JPEG (1080px max width)
         const processed = await ImageManipulator.manipulateAsync(
           raw.uri,
           [{ resize: { width: 1080 } }],
@@ -497,24 +498,36 @@ export default function HostOnboardingPhotosScreen() {
         }));
       };
 
-      // upload 3–4 photos in parallel at a time
+      // === PRIORITY FIX: Upload FIRST photo sequentially ===
+      if (photos.length > 0) {
+        const firstPhoto = photos[0];
+        await uploadPhoto(firstPhoto); // This runs and finishes first
+      }
+
+      // === Then upload the rest concurrently in batches ===
+      const remainingPhotos = photos.slice(1);
       const CONCURRENCY = 3;
-      for (let i = 0; i < photos.length; i += CONCURRENCY) {
-        const batch = photos.slice(i, i + CONCURRENCY);
+
+      for (let i = 0; i < remainingPhotos.length; i += CONCURRENCY) {
+        if (cancelRef.current) break;
+
+        const batch = remainingPhotos.slice(i, i + CONCURRENCY);
         await Promise.all(batch.map(uploadPhoto));
       }
 
-      // finalize all photos on backend
-      await finalizePhotos({ carId, photos: toFinalize });
-
-      Alert.alert("Done", "Photos uploaded. Your draft car is updated.");
-      router.replace({
-        pathname: "/host-onboarding-publish",
-        params: { carId },
-      });
+      // === Finalize all photos on backend (order preserved!) ===
+      if (!cancelRef.current) {
+        await finalizePhotos({ carId, photos: toFinalize });
+        Alert.alert("Done", "Photos uploaded. Your draft car is updated.");
+        router.replace({
+          pathname: "/host-onboarding-publish",
+          params: { carId },
+        });
+      }
     } catch (e: any) {
       console.warn("upload photos failed:", e?.message || e);
 
+      // If error has photo context, mark it as failed
       if (e?.photoId) {
         setPhotoState(e.photoId, {
           stage: "failed",
@@ -681,10 +694,20 @@ export default function HostOnboardingPhotosScreen() {
                       ? styles.badgeFail
                       : styles.badgeNeutral;
 
+                  // Find the position (1-based index) in the current photos array
+                  const photoIndex =
+                    photos.findIndex((photo) => photo.id === p.id) + 1;
+
                   return (
                     <View key={p.id} style={styles.tile}>
                       <Image source={{ uri: p.uri }} style={styles.tileImg} />
 
+                      {/* === NUMBER BADGE - Main photo priority indicator === */}
+                      <View style={styles.tileNumberBadge}>
+                        <Text style={styles.tileNumberText}>{photoIndex}</Text>
+                      </View>
+
+                      {/* Remove X button (only when not busy) */}
                       {!busy ? (
                         <Pressable
                           onPress={() => removePhoto(p.id)}
@@ -698,7 +721,7 @@ export default function HostOnboardingPhotosScreen() {
                         </Pressable>
                       ) : null}
 
-                      {/* bigger overlay so spinner isn't cramped */}
+                      {/* existing overlay so spinner isn't cramped */}
                       {showOverlay ? (
                         <View
                           style={[
@@ -1163,5 +1186,24 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     color: "#991B1B",
+  },
+  tileNumberBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(15,23,42,0.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+  tileNumberText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#FFFFFF",
   },
 });

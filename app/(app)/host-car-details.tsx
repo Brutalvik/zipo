@@ -377,9 +377,10 @@ export default function HostCarDetails() {
 
   // ✅ local order for photos (UI-only reorder)
   const [galleryLocal, setGalleryLocal] = useState<string[]>([]);
-  useEffect(() => {
-    setGalleryLocal(gallery);
-  }, [gallery]);
+  // useEffect(() => {
+  //   setGalleryLocal(gallery);
+  //   setInitialGallery(gallery);
+  // }, [gallery]);
 
   // -------- Local editable state (NOT auto-saving) --------
   const [odoText, setOdoText] = useState("");
@@ -407,6 +408,7 @@ export default function HostCarDetails() {
   const [calendarNote, setCalendarNote] = useState<string>("");
 
   const [addFeaturesOpen, setAddFeaturesOpen] = useState(false);
+  const [initialGallery, setInitialGallery] = useState<string[]>([]);
 
   const odometerLocked = useMemo(
     () => Number(car?.odometer_km ?? 0) > 0,
@@ -433,9 +435,10 @@ export default function HostCarDetails() {
     return (
       odoNow !== init.odometer_km ||
       !arraysEqual(aNow, init.amenities) ||
-      !arraysEqual(bNow, init.blocked)
+      !arraysEqual(bNow, init.blocked) ||
+      !arraysEqual(galleryLocal, initialGallery)
     );
-  }, [odoText, amenitiesLocal, blockedLocal]);
+  }, [odoText, amenitiesLocal, blockedLocal, galleryLocal, initialGallery]);
 
   const loadCar = useCallback(async () => {
     if (!carId) throw new Error("Missing carId");
@@ -468,11 +471,18 @@ export default function HostCarDetails() {
           : []
       ).filter((k) => !isBeforeDateKey(k, todayKey));
 
+      // === Set all local states ===
       setOdoText(odo ? String(odo) : "");
       setAmenitiesLocal(amenities);
       setBlockedLocal(blocked);
 
+      // === Set initial values for dirty detection ===
       initialRef.current = { odometer_km: odo, amenities, blocked };
+
+      // === CRITICAL: Set initial gallery order only once on load ===
+      const currentGallery = getGalleryUrls(c!);
+      setGalleryLocal(currentGallery);
+      setInitialGallery(currentGallery);
 
       setRangeStart(null);
       setRangeEnd(null);
@@ -521,10 +531,10 @@ export default function HostCarDetails() {
 
     const amenities = uniqSortedStrings(amenitiesLocal);
     const blocked = uniqSortedStrings(blockedLocal);
-
     const odoRaw = String(odoText).replace(/[^\d]/g, "");
     const odo = odoRaw ? Number(odoRaw) : 0;
 
+    // Odometer validation
     if (!odometerLocked) {
       if (!Number.isFinite(odo) || odo <= 0) {
         throw new Error("Please enter a valid odometer in KM.");
@@ -537,10 +547,13 @@ export default function HostCarDetails() {
     }
 
     const patch: any = {
+      // Save amenities
       features: {
         ...(car.features || {}),
         amenities,
       },
+
+      // Save blocked dates
       requirements: {
         ...(car.requirements || {}),
         availability: {
@@ -550,17 +563,33 @@ export default function HostCarDetails() {
           blockedDates: blocked,
         },
       },
+
+      // === SAVE REORDERED PHOTO ORDER ===
+      // Only saved when user taps Update/Publish — not on drag
+      image_gallery: galleryLocal,
     };
 
+    // Save odometer if not locked
     if (!odometerLocked) {
       patch.odometer_km = odo;
     }
 
+    // Send patch to backend
     await patchCar(patch);
 
+    // Reload fresh car data
     const fresh = await loadCar();
+
+    // Update initial state so "Unsaved" disappears
     const freshOdo = Number(fresh?.odometer_km ?? 0) || 0;
-    initialRef.current = { odometer_km: freshOdo, amenities, blocked };
+    initialRef.current = {
+      odometer_km: freshOdo,
+      amenities,
+      blocked,
+    };
+
+    // Also update initial gallery order so future drags detect changes correctly
+    setInitialGallery(getGalleryUrls(fresh as HostCar));
   }, [
     car,
     amenitiesLocal,
@@ -570,8 +599,8 @@ export default function HostCarDetails() {
     isActive,
     patchCar,
     loadCar,
+    galleryLocal, // critical dependency
   ]);
-
   const onPrimaryAction = useCallback(async () => {
     if (!car) return;
 
@@ -583,10 +612,10 @@ export default function HostCarDetails() {
     try {
       setBusy(true);
 
-      // ✅ Save changes first
+      // Save changes first
       await saveOnly();
 
-      // ✅ Publish if draft/inactive/etc
+      // Publish if draft/inactive/etc
       if (!isActive) {
         const token = await getIdToken();
         const res = await fetch(
@@ -881,10 +910,13 @@ export default function HostCarDetails() {
     return out;
   }, [blockedLocal, todayKey]);
 
-  // ✅ Photos reorder (UI-only)
+  // Photos reorder (UI-only)
   const photoKeyExtractor = useCallback((u: string) => u, []);
   const renderPhotoItem = useCallback(
     ({ item, drag, isActive }: RenderItemParams<string>) => {
+      const index = galleryLocal.findIndex((url) => url === item);
+      const isMain = index === 0;
+
       return (
         <Pressable
           onLongPress={drag}
@@ -899,13 +931,27 @@ export default function HostCarDetails() {
             style={styles.dragThumb}
             resizeMode="cover"
           />
+
+          {/* Number badge (1, 2, 3, ...) */}
+          <View style={styles.photoNumberBadge}>
+            <Text style={styles.photoNumberText}>{index + 1}</Text>
+          </View>
+
+          {/* "Main" badge only on the first photo */}
+          {isMain && (
+            <View style={styles.mainPhotoBadge}>
+              <Text style={styles.mainPhotoText}>Main</Text>
+            </View>
+          )}
+
+          {/* Drag handle */}
           <View style={styles.dragHandle}>
             <Feather name="move" size={14} color="rgba(255,255,255,0.90)" />
           </View>
         </Pressable>
       );
     },
-    []
+    [galleryLocal]
   );
 
   const onDragEnd = useCallback((next: string[], from: number, to: number) => {
@@ -2068,5 +2114,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
     color: "rgba(17,24,39,0.45)",
+  },
+  photoNumberBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(15,23,42,0.8)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    zIndex: 10,
+  },
+  photoNumberText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#FFFFFF",
+  },
+  mainPhotoBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "rgba(34,197,94,0.9)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    zIndex: 10,
+  },
+  mainPhotoText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: "#FFFFFF",
   },
 });
