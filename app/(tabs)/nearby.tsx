@@ -33,6 +33,7 @@ import {
   regionFromRadius,
   titleCaseCity,
 } from "@/lib/locationHelpers";
+import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 
 type ApiCar = {
   id: string;
@@ -57,8 +58,8 @@ type ApiCar = {
   };
 };
 
-const PRICE_MAX = 300; // 300 means "300+ (no cap)"
-const RATING_ANY = 5.0; // 5.0 means "Any"
+const PRICE_MAX = 300;
+const RATING_ANY = 5.0;
 const LOCATION_EXPLAINER_KEY = "zipo_location_explainer_shown_v1";
 
 function filterToChips(f: NearbyFilters): string[] {
@@ -70,7 +71,6 @@ function filterToChips(f: NearbyFilters): string[] {
   if (f.minSeats != null)
     chips.push(f.minSeats >= 5 ? "5+ seats" : `${f.minSeats}+ seats`);
 
-  // rating: 5.0 means Any => don't show chip
   if (
     typeof (f as any).minRating === "number" &&
     (f as any).minRating < RATING_ANY
@@ -78,7 +78,6 @@ function filterToChips(f: NearbyFilters): string[] {
     chips.push(`${(f as any).minRating.toFixed(1)}★+`);
   }
 
-  // price: 300 means 300+ (no cap) => don't show chip
   if (
     typeof (f as any).maxPricePerDay === "number" &&
     (f as any).maxPricePerDay < PRICE_MAX
@@ -103,18 +102,14 @@ function isDefaultFilters(f: NearbyFilters) {
   );
 }
 
-/**
- * Analytics hook (safe stub).
- * Replace the body with your real analytics client (PostHog, Amplitude, Firebase, etc).
- */
 function trackEvent(name: string, props?: Record<string, any>) {
-  // eslint-disable-next-line no-console
   console.log(`[analytics] ${name}`, props ?? {});
 }
 
 export default function NearbyScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const mapRef = useRef<MapView>(null);
+  const shouldZoomRef = useRef(true);
 
   const API_BASE = useMemo(
     () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
@@ -142,13 +137,21 @@ export default function NearbyScreen() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<NearbyFilters>(DEFAULT_FILTERS);
 
-  // one-time explainer
   const [explainerLoaded, setExplainerLoaded] = useState(false);
   const [explainerShown, setExplainerShown] = useState(false);
   const [showExplainerInline, setShowExplainerInline] = useState(false);
 
+  const [searchLat, setSearchLat] = useState<number | null>(null);
+  const [searchLng, setSearchLng] = useState<number | null>(null);
+
   const activeFilterChips = useMemo(() => filterToChips(filters), [filters]);
   const canClear = useMemo(() => !isDefaultFilters(filters), [filters]);
+
+  const effectiveLat = isUsingUserLocation ? userLat : searchLat ?? userLat;
+
+  const effectiveLng = isUsingUserLocation ? userLng : searchLng ?? userLng;
+
+  const didInitLocationRef = useRef(false);
 
   const filteredCars = useMemo(() => {
     let list = cars;
@@ -175,13 +178,11 @@ export default function NearbyScreen() {
       list = list.filter((c) => (c.seats ?? 0) >= filters.minSeats!);
     }
 
-    // rating: 5.0 means Any => do not filter
     const r = (filters as any).minRating;
     if (typeof r === "number" && r < RATING_ANY) {
       list = list.filter((c) => (c.rating ?? 0) >= r);
     }
 
-    // price: 300 means 300+ (no cap) => do not filter
     const p = (filters as any).maxPricePerDay;
     if (typeof p === "number" && p < PRICE_MAX) {
       list = list.filter(
@@ -225,7 +226,6 @@ export default function NearbyScreen() {
           typeof pos.coords.accuracy === "number" ? pos.coords.accuracy : null;
         setAccuracyMeters(acc);
 
-        // Approximate-ish heuristic: large accuracy radius
         const approx = acc != null && acc >= 1000;
         setIsApproxLocation(approx);
         if (approx) {
@@ -235,9 +235,12 @@ export default function NearbyScreen() {
           });
         }
 
+        shouldZoomRef.current = true;
         setUserLat(lat);
         setUserLng(lng);
-        setIsUsingUserLocation(true);
+        if (opts?.reason === "user_action") {
+          setIsUsingUserLocation(true);
+        }
 
         trackEvent("location_granted_and_loaded", {
           accuracy_m: acc,
@@ -259,23 +262,11 @@ export default function NearbyScreen() {
         const label = titleCaseCity(cityGuess) || "Your area";
         setCityLabel(label);
         setCityInput(label);
-
-        // If approximate, zoom slightly wider so pins are still visible
-        const zoomRadius = approx
-          ? Math.min(MAX_RADIUS, Math.max(radiusKm, 15))
-          : radiusKm;
-
-        requestAnimationFrame(() => {
-          mapRef.current?.animateToRegion(
-            regionFromRadius(lat, lng, zoomRadius),
-            250
-          );
-        });
       } catch {
         setLocAllowed(false);
       }
     },
-    [radiusKm]
+    []
   );
 
   const fetchCarsForRadius = useCallback(
@@ -387,8 +378,8 @@ export default function NearbyScreen() {
 
         setIsUsingUserLocation(false);
         setCityLabel(titleCaseCity(cleaned));
-        setUserLat(lat);
-        setUserLng(lng);
+        setSearchLat(lat);
+        setSearchLng(lng);
 
         mapRef.current?.animateToRegion(
           regionFromRadius(lat, lng, radiusKm),
@@ -396,7 +387,7 @@ export default function NearbyScreen() {
         );
         fetchCarsForRadius(lat, lng, radiusKm);
       } catch {
-        Alert.alert("Couldn’t search city", "Please try again.", [
+        Alert.alert("Couldn't search city", "Please try again.", [
           { text: "OK" },
         ]);
       }
@@ -404,7 +395,6 @@ export default function NearbyScreen() {
     [fetchCarsForRadius, radiusKm]
   );
 
-  // One-time explainer state bootstrap
   useEffect(() => {
     (async () => {
       try {
@@ -418,7 +408,6 @@ export default function NearbyScreen() {
     })();
   }, []);
 
-  // Initial boot: don't spam prompt; check permission and load if already granted
   useEffect(() => {
     (async () => {
       try {
@@ -429,7 +418,6 @@ export default function NearbyScreen() {
         if (granted) {
           requestAndLoadLocation({ reason: "initial" });
         } else {
-          // show explainer inline only if not shown before
           if (explainerLoaded && !explainerShown) {
             setShowExplainerInline(true);
             trackEvent("location_explainer_shown", {
@@ -443,19 +431,41 @@ export default function NearbyScreen() {
     })();
   }, [explainerLoaded, explainerShown, requestAndLoadLocation]);
 
-  // fetch + zoom when committed radius changes
+  const prevLocationRef = useRef<{ lat: number | null; lng: number | null }>({
+    lat: null,
+    lng: null,
+  });
+
+  // Effect 1 - handles both location and radius changes
   useEffect(() => {
-    if (userLat == null || userLng == null) return;
+    if (effectiveLat == null || effectiveLng == null) return;
+    fetchCarsForRadius(effectiveLat, effectiveLng, radiusKm);
+  }, [effectiveLat, effectiveLng, radiusKm]);
+
+  // Effect 2 - Zoom map ONLY when location coordinates actually change
+  useEffect(() => {
+    if (effectiveLat == null || effectiveLng == null) return;
+
+    const locationChanged =
+      prevLocationRef.current.lat !== effectiveLat ||
+      prevLocationRef.current.lng !== effectiveLng;
+
+    if (!locationChanged) return;
+
+    prevLocationRef.current = {
+      lat: effectiveLat,
+      lng: effectiveLng,
+    };
 
     const zoomRadius = isApproxLocation
       ? Math.min(MAX_RADIUS, Math.max(radiusKm, 15))
       : radiusKm;
+
     mapRef.current?.animateToRegion(
-      regionFromRadius(userLat, userLng, zoomRadius),
+      regionFromRadius(effectiveLat, effectiveLng, zoomRadius),
       250
     );
-    fetchCarsForRadius(userLat, userLng, radiusKm);
-  }, [userLat, userLng, radiusKm, fetchCarsForRadius, isApproxLocation]);
+  }, [effectiveLat, effectiveLng, radiusKm, isApproxLocation]);
 
   const headerTitle = useMemo(() => {
     if (locAllowed === false) return "Location needed";
@@ -466,7 +476,6 @@ export default function NearbyScreen() {
   }, [filteredCarsWithCoords.length, locAllowed]);
 
   const requestLocationPermissionAgain = useCallback(async () => {
-    // One-time explainer gate
     if (explainerLoaded && !explainerShown) {
       setShowExplainerInline(true);
       trackEvent("location_explainer_shown", {
@@ -505,7 +514,6 @@ export default function NearbyScreen() {
       return;
     }
 
-    // Permanently denied (iOS or Android "Don't ask again")
     trackEvent("location_permission_blocked", { surface: "nearby" });
 
     Alert.alert(
@@ -536,7 +544,6 @@ export default function NearbyScreen() {
     }
 
     trackEvent("location_explainer_continue", { surface: "nearby_inline" });
-    // Now actually request
     requestLocationPermissionAgain();
   }, [requestLocationPermissionAgain]);
 
@@ -552,9 +559,10 @@ export default function NearbyScreen() {
     trackEvent("location_explainer_dismiss", { surface: "nearby_inline" });
   }, []);
 
+  // ... (keep all imports and functions the same until the return statement)
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      {/* Top row */}
       <View style={styles.topRow}>
         <Text style={styles.brand}>Zipo</Text>
         <View style={{ flexDirection: "row", gap: 10 }}>
@@ -570,7 +578,6 @@ export default function NearbyScreen() {
         </View>
       </View>
 
-      {/* One-time inline explainer (before requesting permission) */}
       {showExplainerInline ? (
         <View style={[styles.explainerCard, SHADOW_CARD]}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -603,7 +610,6 @@ export default function NearbyScreen() {
         </View>
       ) : null}
 
-      {/* Approx location banner */}
       {locAllowed === true && isApproxLocation ? (
         <View style={[styles.approxBanner, SHADOW_CARD]}>
           <Text style={styles.approxTitle}>Using approximate location</Text>
@@ -615,34 +621,119 @@ export default function NearbyScreen() {
         </View>
       ) : null}
 
-      {/* City input pill + buttons */}
       <View style={styles.searchRow}>
-        <View style={[styles.cityPill, SHADOW_CARD]}>
-          <Feather name="map-pin" size={16} color={COLORS.muted} />
-
-          <TextInput
-            value={cityInput}
-            onChangeText={(t) => {
-              setCityInput(t);
-              setCityLabel(t);
-            }}
+        <View style={styles.cityPillWrapper}>
+          <GooglePlacesAutocomplete
             placeholder="Search city"
-            placeholderTextColor="#9CA3AF"
-            style={styles.cityInput}
-            returnKeyType="search"
-            onSubmitEditing={() => geocodeCityAndSearch(cityInput)}
-          />
+            fetchDetails
+            debounce={300}
+            enablePoweredByContainer={false}
+            listViewDisplayed="auto"
+            keepResultsAfterBlur={false}
+            query={{
+              key: process.env.EXPO_PUBLIC_GOOGLE_PLACES_KEY!,
+              language: "en",
+              components: "country:ca",
+              types: "(cities)",
+            }}
+            onPress={(data, details) => {
+              if (!details) return;
 
-          <Pressable
-            onPress={() => requestLocationPermissionAgain()}
-            style={styles.circleBtn}
-            accessibilityRole="button"
-          >
-            <Feather name="crosshair" size={16} color={COLORS.text} />
-          </Pressable>
+              const lat = details.geometry?.location?.lat;
+              const lng = details.geometry?.location?.lng;
+
+              if (lat && lng) {
+                shouldZoomRef.current = true;
+                setIsUsingUserLocation(false);
+                setCityLabel(data.description);
+                setCityInput(data.description);
+                setSearchLat(lat);
+                setSearchLng(lng);
+
+                mapRef.current?.animateToRegion(
+                  regionFromRadius(lat, lng, radiusKm),
+                  250
+                );
+              }
+            }}
+            textInputProps={{
+              value: cityInput,
+              onChangeText: (text) => {
+                setCityInput(text);
+                if (text === "") {
+                  setCityLabel("");
+                }
+              },
+              placeholderTextColor: "#9CA3AF",
+              clearButtonMode: "while-editing",
+            }}
+            renderLeftButton={() => (
+              <View style={styles.leftIconWrapper}>
+                <Feather name="map-pin" size={16} color={COLORS.muted} />
+              </View>
+            )}
+            renderRightButton={() => (
+              <Pressable
+                onPress={() => requestLocationPermissionAgain()}
+                style={styles.circleBtn}
+                accessibilityRole="button"
+              >
+                <Feather name="crosshair" size={16} color={COLORS.text} />
+              </Pressable>
+            )}
+            styles={{
+              container: {
+                flex: 1,
+              },
+              textInputContainer: {
+                backgroundColor: COLORS.white,
+                borderWidth: 1,
+                borderColor: COLORS.border,
+                borderRadius: RADIUS.xl,
+                paddingHorizontal: 0,
+                paddingRight: 14,
+                height: 48,
+                flexDirection: "row",
+                alignItems: "center",
+              },
+              textInput: {
+                flex: 1,
+                height: 48,
+                fontSize: 14,
+                fontWeight: "800",
+                color: COLORS.text,
+                backgroundColor: "transparent",
+                paddingHorizontal: 10,
+                paddingVertical: 0,
+                margin: 0,
+              },
+              listView: {
+                position: "absolute",
+                top: 54,
+                left: 0,
+                right: 0,
+                backgroundColor: COLORS.white,
+                borderRadius: RADIUS.lg,
+                borderWidth: 1,
+                borderColor: COLORS.border,
+                zIndex: 1001,
+                elevation: 10,
+                maxHeight: 200,
+              },
+              row: {
+                padding: 12,
+                backgroundColor: COLORS.white,
+              },
+              description: {
+                fontSize: 13,
+                fontWeight: "800",
+                color: COLORS.text,
+              },
+              separator: { height: 1, backgroundColor: COLORS.border },
+            }}
+          />
         </View>
 
-        {/* Filters */}
         <Pressable
           onPress={() => {
             if (cars.length === 0) {
@@ -662,7 +753,7 @@ export default function NearbyScreen() {
         </Pressable>
       </View>
 
-      {/* Count + subtitle */}
+      {/* Rest of the component stays the same */}
       <View style={styles.resultsBlock}>
         <Text style={styles.resultsTitle}>{headerTitle}</Text>
         <Text style={styles.resultsSub}>
@@ -681,7 +772,6 @@ export default function NearbyScreen() {
           </Pressable>
         ) : null}
 
-        {/* Active filter chips + clear */}
         {activeFilterChips.length ? (
           <View style={styles.chipsRow}>
             {activeFilterChips.map((c) => (
@@ -702,7 +792,6 @@ export default function NearbyScreen() {
         ) : null}
       </View>
 
-      {/* Radius slider */}
       <View style={styles.radiusCard}>
         <View style={styles.radiusRow}>
           <Text style={styles.radiusLabel}>Radius</Text>
@@ -722,7 +811,6 @@ export default function NearbyScreen() {
         />
       </View>
 
-      {/* Map */}
       <View style={styles.mapWrap}>
         <MapView
           ref={mapRef}
@@ -735,7 +823,7 @@ export default function NearbyScreen() {
             longitudeDelta: 0.15,
           }}
         >
-          {userLat != null && userLng != null ? (
+          {isUsingUserLocation && userLat != null && userLng != null ? (
             <Marker
               coordinate={{ latitude: userLat, longitude: userLng }}
               anchor={{ x: 0.5, y: 0.5 }}
@@ -763,18 +851,19 @@ export default function NearbyScreen() {
           ))}
         </MapView>
 
-        {/* Refresh */}
         <Pressable
           onPress={() => {
-            if (userLat != null && userLng != null) {
+            const lat = effectiveLat;
+            const lng = effectiveLng;
+            if (lat != null && lng != null) {
               const zoomRadius = isApproxLocation
                 ? Math.min(MAX_RADIUS, Math.max(radiusKm, 15))
                 : radiusKm;
               mapRef.current?.animateToRegion(
-                regionFromRadius(userLat, userLng, zoomRadius),
+                regionFromRadius(lat, lng, zoomRadius),
                 250
               );
-              fetchCarsForRadius(userLat, userLng, radiusKm);
+              fetchCarsForRadius(lat, lng, radiusKm);
             } else {
               requestLocationPermissionAgain();
             }
@@ -791,7 +880,6 @@ export default function NearbyScreen() {
 
       <View style={{ height: tabBarHeight }} />
 
-      {/* Filters modal */}
       <NearbyFiltersModal
         visible={filtersOpen}
         initial={filters}
@@ -819,7 +907,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   brand: { fontSize: 28, fontWeight: "900", color: COLORS.text },
-
   iconBtn: {
     width: 44,
     height: 44,
@@ -845,7 +932,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.7)",
   },
   badgeText: { color: "#fff", fontSize: 10, fontWeight: "900" },
-
   avatar: {
     width: 44,
     height: 44,
@@ -857,7 +943,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   avatarText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
-
   explainerCard: {
     marginTop: 12,
     backgroundColor: COLORS.white,
@@ -912,7 +997,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   explainerBtnText: { fontSize: 13, fontWeight: "900", color: COLORS.white },
-
   approxBanner: {
     marginTop: 10,
     backgroundColor: "rgba(0,0,0,0.04)",
@@ -929,32 +1013,23 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     lineHeight: 16,
   },
-
   searchRow: {
     marginTop: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+    zIndex: 1000,
   },
-
-  cityPill: {
+  cityPillWrapper: {
     flex: 1,
-    flexDirection: "row",
+    zIndex: 1000,
+  },
+  leftIconWrapper: {
+    width: 40,
+    height: 48,
     alignItems: "center",
-    gap: 10,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.xl,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  cityInput: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "800",
-    color: COLORS.text,
-    paddingVertical: 0,
+    justifyContent: "center",
+    marginLeft: 8,
   },
   circleBtn: {
     width: 34,
@@ -963,8 +1038,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.06)",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 4,
   },
-
   filterBtn: {
     width: 48,
     height: 48,
@@ -974,9 +1049,9 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
     alignItems: "center",
     justifyContent: "center",
+    zIndex: 1,
   },
-
-  resultsBlock: { paddingTop: 14, paddingBottom: 10 },
+  resultsBlock: { paddingTop: 14, paddingBottom: 10, zIndex: 1 },
   resultsTitle: { fontSize: 18, fontWeight: "900", color: COLORS.text },
   resultsSub: {
     marginTop: 6,
@@ -984,7 +1059,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.muted,
   },
-
   enableLocChip: {
     marginTop: 10,
     alignSelf: "flex-start",
@@ -999,7 +1073,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   enableLocChipText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
-
   chipsRow: {
     marginTop: 10,
     flexDirection: "row",
@@ -1025,7 +1098,6 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   clearChipText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
-
   radiusCard: {
     backgroundColor: COLORS.white,
     borderWidth: 1,
@@ -1034,6 +1106,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     marginBottom: 10,
+    zIndex: 1,
   },
   radiusRow: {
     flexDirection: "row",
@@ -1042,7 +1115,6 @@ const styles = StyleSheet.create({
   },
   radiusLabel: { fontSize: 12, fontWeight: "900", color: COLORS.muted },
   radiusValue: { fontSize: 12, fontWeight: "900", color: COLORS.text },
-
   mapWrap: {
     flex: 1,
     borderRadius: RADIUS.xl,
@@ -1050,8 +1122,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
     backgroundColor: "#fff",
+    zIndex: 1,
   },
-
   refreshFab: {
     position: "absolute",
     right: 12,
@@ -1067,7 +1139,6 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   refreshFabText: { fontSize: 12, fontWeight: "900", color: COLORS.text },
-
   blueDotOuter: {
     width: 15,
     height: 15,
@@ -1084,7 +1155,6 @@ const styles = StyleSheet.create({
     borderWidth: 4,
     borderColor: "#fff",
   },
-
   priceMarker: {
     backgroundColor: "#111827",
     paddingHorizontal: 10,

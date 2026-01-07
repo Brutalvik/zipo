@@ -74,7 +74,7 @@ export default function HomeScreen() {
 
   const featured = useAppSelector(selectFeaturedCars);
   const popular = useAppSelector(selectPopularCars);
-  const cars = useAppSelector(selectCars); // Only used for home browse
+  const cars = useAppSelector(selectCars);
 
   const statusList = useAppSelector(selectCarsStatus);
   const statusFeatured = useAppSelector(selectFeaturedStatus);
@@ -214,12 +214,6 @@ export default function HomeScreen() {
         })
       );
 
-      console.log("FULL RESULT:", result);
-      console.log("RESULT TYPE:", result.type);
-      console.log("RESULT PAYLOAD:", result.payload);
-      console.log("PAYLOAD KEYS:", Object.keys(result.payload || {}));
-
-      // ✅ FIXED: Correctly extract items from thunk payload
       const payload = result.payload as { items: Car[]; page: any } | undefined;
       const foundCars = payload?.items || [];
 
@@ -241,7 +235,7 @@ export default function HomeScreen() {
     overlay.setValue(0);
     runExitSearchAnim(() => {
       setIsSearchMode(false);
-      setSearchResultsLocal([]); // Clear when going back
+      setSearchResultsLocal([]);
     });
   }, [overlay, runExitSearchAnim]);
 
@@ -289,11 +283,6 @@ export default function HomeScreen() {
       (c) => (c.vehicleType ?? "").toLowerCase() === selectedType.toLowerCase()
     );
   }, [isSearchMode, searchResultsLocal, selectedType]);
-
-  console.log(
-    "Rendering search mode with filteredResults:",
-    filteredResults.length
-  );
 
   // ---------------------------
   // SEARCH MODE
