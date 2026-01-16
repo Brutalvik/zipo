@@ -394,10 +394,6 @@ export default function ProfileScreen() {
                     </View>
                   )}
                 </View>
-
-                <View style={styles.cameraBadge}>
-                  <Feather name="camera" size={14} color="#111827" />
-                </View>
               </View>
 
               <View style={styles.identityCol}>
@@ -714,25 +710,6 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: "900",
     color: "rgba(17,24,39,0.65)",
-  },
-
-  cameraBadge: {
-    position: "absolute",
-    bottom: 4,
-    right: 4,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 6,
   },
 
   identityCol: { flex: 1, marginLeft: 14 },

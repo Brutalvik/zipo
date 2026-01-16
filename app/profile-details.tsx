@@ -1,5 +1,11 @@
 // app/(tabs)/profile-details.tsx
-import React, { useMemo, useState, useCallback, useEffect } from "react";
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -190,16 +196,14 @@ export default function ProfileDetailsScreen() {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((s) => s.auth);
 
+  // Ensures signed URL is refreshed when screen focuses (your hook)
   useFreshAvatarUrl({ refreshMeOnFocus: false, forceSignedUrlOnFocus: true });
 
   const avatarUploadStatus = useAppSelector(selectAvatarUploadStatus);
   const avatarUploadError = useAppSelector(selectAvatarUploadError);
-
   const isUploadingPhoto = avatarUploadStatus === "loading";
 
   const dbUser = user as any;
-
-  const [avatarKey, setAvatarKey] = React.useState(0);
 
   const fullName =
     dbUser?.full_name ??
@@ -235,7 +239,37 @@ export default function ProfileDetailsScreen() {
     return "Not started";
   }, [kycStatus]);
 
+  // ✅ canonical avatar source from DB (signed URL)
   const profilePhotoUrl = dbUser?.profile_photo_url ?? null;
+
+  // ✅ optimistic instant preview
+  const [optimisticAvatarUri, setOptimisticAvatarUri] = useState<string | null>(
+    null
+  );
+  const lastStableRemoteUrlRef = useRef<string | null>(profilePhotoUrl);
+
+  // Keep a pointer to last known stable remote URL so we can revert on failure.
+  useEffect(() => {
+    if (profilePhotoUrl) {
+      lastStableRemoteUrlRef.current = profilePhotoUrl;
+    }
+  }, [profilePhotoUrl]);
+
+  // If backend URL arrives, drop optimistic preview
+  useEffect(() => {
+    if (profilePhotoUrl && optimisticAvatarUri) {
+      setOptimisticAvatarUri(null);
+    }
+  }, [profilePhotoUrl, optimisticAvatarUri]);
+
+  // For better perf: memo the computed image uri
+  const avatarRenderUri = useMemo(() => {
+    // show instantly if user just picked a new photo
+    if (optimisticAvatarUri) return optimisticAvatarUri;
+    // otherwise show signed url
+    if (profilePhotoUrl) return profilePhotoUrl;
+    return null;
+  }, [optimisticAvatarUri, profilePhotoUrl]);
 
   const dobFromDbRaw = dbUser?.date_of_birth ?? null;
   const dobFromDbYmd: string | null =
@@ -417,8 +451,6 @@ export default function ProfileDetailsScreen() {
         phoneChanged,
       });
 
-      // Handle email change
-      // Handle email change
       if (emailChanged) {
         const doEmailFlow = async () => {
           const u = auth.currentUser;
@@ -453,14 +485,12 @@ export default function ProfileDetailsScreen() {
           );
         };
 
-        // ALWAYS require password confirmation for email changes
         setPendingRetry(() => doEmailFlow);
         setReauthOpen(true);
         setIsSaving(false);
         return;
       }
 
-      // Handle phone/DOB changes
       const payload: Record<string, any> = {};
 
       if (phoneChanged) {
@@ -473,7 +503,6 @@ export default function ProfileDetailsScreen() {
         payload.date_of_birth = form.date_of_birth_ymd;
       }
 
-      // Commit helper so we can call it after the DOB confirmation dialog
       const commitProfilePatch = async () => {
         if (Object.keys(payload).length > 0) {
           const updated = await patchMe(payload);
@@ -505,14 +534,13 @@ export default function ProfileDetailsScreen() {
           );
           return;
         }
-        // Refresh and exit edit mode
+
         await refreshMe();
         setIsEditing(false);
         track("profile_details_save_success", {});
         Alert.alert("Saved", "Your profile has been updated.");
       };
 
-      //  One-time DOB warning + choice to go back or continue
       if (dobWillBeSetFirstTime) {
         Alert.alert(
           "Set date of birth?",
@@ -522,7 +550,6 @@ export default function ProfileDetailsScreen() {
               text: "Go back",
               style: "cancel",
               onPress: () => {
-                // let the user continue editing; don't save
                 setIsSaving(false);
               },
             },
@@ -531,7 +558,6 @@ export default function ProfileDetailsScreen() {
               style: "destructive",
               onPress: async () => {
                 try {
-                  // continue the normal save flow
                   await commitProfilePatch();
                 } catch (e: any) {
                   console.warn("save failed", e?.message || e);
@@ -548,7 +574,6 @@ export default function ProfileDetailsScreen() {
         return;
       }
 
-      // If DOB isn't being set for the first time, just commit normally
       await commitProfilePatch();
       return;
     } catch (e: any) {
@@ -575,7 +600,7 @@ export default function ProfileDetailsScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"] as any,
       quality: 0.85,
       allowsEditing: true,
       aspect: [1, 1],
@@ -586,10 +611,13 @@ export default function ProfileDetailsScreen() {
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
 
+    // ✅ INSTANT UI: show the picked photo immediately
+    const prevStable = lastStableRemoteUrlRef.current;
+    setOptimisticAvatarUri(asset.uri);
+
     try {
       track("profile_details_photo_upload_start", {});
 
-      // mimeType is available on newer expo-image-picker; fallback is handled in thunk
       await dispatch(
         uploadUserAvatar({
           uri: asset.uri,
@@ -597,10 +625,29 @@ export default function ProfileDetailsScreen() {
         })
       ).unwrap();
 
+      // Refresh DB user (this will bring the new signed profile_photo_url)
       await refreshMe();
+
+      // Prefetch remote image so it swaps smoothly
+      const nextRemote = ((): string | null => {
+        const u = (user as any)?.profile_photo_url ?? null;
+        return typeof u === "string" && u.length ? u : null;
+      })();
+      if (nextRemote) {
+        try {
+          await Image.prefetch(nextRemote);
+        } catch {}
+      }
 
       track("profile_details_photo_upload_success", {});
     } catch (e: any) {
+      // Revert preview on failure
+      setOptimisticAvatarUri(null);
+
+      // (optional) force back to previous stable url in UI state by ref
+      lastStableRemoteUrlRef.current =
+        prevStable ?? lastStableRemoteUrlRef.current;
+
       const msg =
         typeof e === "string"
           ? e
@@ -610,19 +657,6 @@ export default function ProfileDetailsScreen() {
       Alert.alert("Upload failed", msg);
     }
   };
-
-  // const handleReauthSuccess = async () => {
-  //   try {
-  //     if (pendingRetry) {
-  //       const fn = pendingRetry;
-  //       setPendingRetry(null);
-  //       setReauthOpen(false);
-  //       await fn();
-  //     }
-  //   } catch (e: any) {
-  //     Alert.alert("Couldn't continue", firebaseFriendlyMessage(e));
-  //   }
-  // };
 
   const handleReauthSuccess = async () => {
     const fn = pendingRetry;
@@ -645,21 +679,6 @@ export default function ProfileDetailsScreen() {
     ? `${phonePending} (pending)`
     : phoneE164 || "Not set";
   const kycIsVerified = kycLabel === "Verified";
-
-  console.log("AVATAR URL:", profilePhotoUrl);
-  console.log("AVATAR PATH:", dbUser?.profile_photo_path);
-
-  useEffect(() => {
-    setAvatarKey((k) => k + 1);
-  }, [profilePhotoUrl]);
-
-  // useEffect(() => {
-  //   if (!dbUser?.profile_photo_path) return;
-
-  //   if (dbUser?.profile_photo_url) return;
-
-  //   dispatch(refreshSignedAvatarUrl());
-  // }, [dispatch, dbUser?.profile_photo_path, dbUser?.profile_photo_url]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -700,14 +719,10 @@ export default function ProfileDetailsScreen() {
         <View style={styles.card}>
           <View style={styles.topRow}>
             <View style={styles.avatarWrap}>
-              {profilePhotoUrl ? (
+              {avatarRenderUri ? (
                 <Image
-                  source={{ uri: profilePhotoUrl }}
+                  source={{ uri: avatarRenderUri }}
                   style={styles.avatar}
-                  onError={(e) =>
-                    console.log("AVATAR_IMAGE_ERROR", e?.nativeEvent)
-                  }
-                  onLoad={() => console.log("AVATAR_IMAGE_LOADED")}
                 />
               ) : (
                 <View style={styles.avatarPlaceholder}>
