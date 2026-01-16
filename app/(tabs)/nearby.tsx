@@ -119,6 +119,8 @@ export default function NearbyScreen() {
     longitudeDelta: number;
   } | null>(null);
 
+  const lastSelectedRef = useRef<string | null>(null);
+
   const API_BASE = useMemo(
     () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
     []
@@ -365,42 +367,9 @@ export default function NearbyScreen() {
     [API_BASE]
   );
 
-  // const geocodeCityAndSearch = useCallback(
-  //   async (city: string) => {
-  //     const cleaned = city.trim();
-  //     if (!cleaned) return;
-
-  //     try {
-  //       const results = await Location.geocodeAsync(cleaned);
-  //       const first = results?.[0];
-  //       if (!first) {
-  //         Alert.alert("City not found", "Try a different city name.", [
-  //           { text: "OK" },
-  //         ]);
-  //         return;
-  //       }
-
-  //       const lat = first.latitude;
-  //       const lng = first.longitude;
-
-  //       setIsUsingUserLocation(false);
-  //       setCityLabel(titleCaseCity(cleaned));
-  //       setSearchLat(lat);
-  //       setSearchLng(lng);
-
-  //       mapRef.current?.animateToRegion(
-  //         regionFromRadius(lat, lng, radiusKm),
-  //         250
-  //       );
-  //       fetchCarsForRadius(lat, lng, radiusKm);
-  //     } catch {
-  //       Alert.alert("Couldn't search city", "Please try again.", [
-  //         { text: "OK" },
-  //       ]);
-  //     }
-  //   },
-  //   [fetchCarsForRadius, radiusKm]
-  // );
+  useEffect(() => {
+    lastSelectedRef.current = selectedCarId;
+  }, [selectedCarId]);
 
   useEffect(() => {
     if (!selectedCarId) return;
@@ -877,8 +846,10 @@ export default function NearbyScreen() {
               </View>
             </Marker>
           ) : null}
+
           {filteredCarsWithCoords.map((car) => {
-            const isSelected = car.id == selectedCarId;
+            const isSelected = car.id === selectedCarId;
+            const wasSelected = car.id === lastSelectedRef.current;
 
             return (
               <Marker
@@ -887,28 +858,11 @@ export default function NearbyScreen() {
                   latitude: car.pickup!.lat!,
                   longitude: car.pickup!.lng!,
                 }}
-                ref={(ref) => {
-                  if (ref) markerRefs.current[car.id] = ref;
-                }}
                 onPress={() => {
                   suppressNextMapPressRef.current = true;
-
-                  setSelectedCarId((prev) => {
-                    const next = prev === car.id ? null : car.id;
-
-                    if (next) {
-                      const lat = car.pickup!.lat!;
-                      const lng = car.pickup!.lng!;
-                      mapRef.current?.animateCamera(
-                        { center: { latitude: lat, longitude: lng } },
-                        { duration: 250 }
-                      );
-                    }
-
-                    return next;
-                  });
+                  setSelectedCarId((prev) => (prev === car.id ? null : car.id));
                 }}
-                tracksViewChanges={isSelected}
+                tracksViewChanges={isSelected || wasSelected}
               >
                 <View
                   style={[
