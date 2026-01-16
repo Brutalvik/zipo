@@ -1,4 +1,6 @@
-export function normStatus(s: any): "active" | "draft" | "inactive" | "other" {
+export default function normStatus(
+  s: any
+): "active" | "draft" | "inactive" | "other" {
   const v = String(s || "")
     .toLowerCase()
     .trim();

@@ -12,11 +12,10 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Marker, PROVIDER_GOOGLE, Callout } from "react-native-maps";
 import * as Location from "expo-location";
 import Slider from "@react-native-community/slider";
 import { Feather } from "@expo/vector-icons";
@@ -34,6 +33,7 @@ import {
   titleCaseCity,
 } from "@/lib/locationHelpers";
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
+import { CarToolTip } from "@/components/cars/CarToolTip";
 
 type ApiCar = {
   id: string;
@@ -110,6 +110,7 @@ export default function NearbyScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const mapRef = useRef<MapView>(null);
   const shouldZoomRef = useRef(true);
+  const markerRefs = useRef<Record<string, any>>({});
 
   const API_BASE = useMemo(
     () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
@@ -147,11 +148,10 @@ export default function NearbyScreen() {
   const activeFilterChips = useMemo(() => filterToChips(filters), [filters]);
   const canClear = useMemo(() => !isDefaultFilters(filters), [filters]);
 
+  const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
+
   const effectiveLat = isUsingUserLocation ? userLat : searchLat ?? userLat;
-
   const effectiveLng = isUsingUserLocation ? userLng : searchLng ?? userLng;
-
-  const didInitLocationRef = useRef(false);
 
   const filteredCars = useMemo(() => {
     let list = cars;
@@ -358,42 +358,69 @@ export default function NearbyScreen() {
     [API_BASE]
   );
 
-  const geocodeCityAndSearch = useCallback(
-    async (city: string) => {
-      const cleaned = city.trim();
-      if (!cleaned) return;
+  // const geocodeCityAndSearch = useCallback(
+  //   async (city: string) => {
+  //     const cleaned = city.trim();
+  //     if (!cleaned) return;
 
-      try {
-        const results = await Location.geocodeAsync(cleaned);
-        const first = results?.[0];
-        if (!first) {
-          Alert.alert("City not found", "Try a different city name.", [
-            { text: "OK" },
-          ]);
-          return;
-        }
+  //     try {
+  //       const results = await Location.geocodeAsync(cleaned);
+  //       const first = results?.[0];
+  //       if (!first) {
+  //         Alert.alert("City not found", "Try a different city name.", [
+  //           { text: "OK" },
+  //         ]);
+  //         return;
+  //       }
 
-        const lat = first.latitude;
-        const lng = first.longitude;
+  //       const lat = first.latitude;
+  //       const lng = first.longitude;
 
-        setIsUsingUserLocation(false);
-        setCityLabel(titleCaseCity(cleaned));
-        setSearchLat(lat);
-        setSearchLng(lng);
+  //       setIsUsingUserLocation(false);
+  //       setCityLabel(titleCaseCity(cleaned));
+  //       setSearchLat(lat);
+  //       setSearchLng(lng);
 
-        mapRef.current?.animateToRegion(
-          regionFromRadius(lat, lng, radiusKm),
-          250
-        );
-        fetchCarsForRadius(lat, lng, radiusKm);
-      } catch {
-        Alert.alert("Couldn't search city", "Please try again.", [
-          { text: "OK" },
-        ]);
+  //       mapRef.current?.animateToRegion(
+  //         regionFromRadius(lat, lng, radiusKm),
+  //         250
+  //       );
+  //       fetchCarsForRadius(lat, lng, radiusKm);
+  //     } catch {
+  //       Alert.alert("Couldn't search city", "Please try again.", [
+  //         { text: "OK" },
+  //       ]);
+  //     }
+  //   },
+  //   [fetchCarsForRadius, radiusKm]
+  // );
+
+  useEffect(() => {
+    if (!selectedCarId) {
+      // Hide all callouts
+      Object.values(markerRefs.current).forEach((ref) => {
+        ref?.hideCallout();
+      });
+      return;
+    }
+
+    // Show callout for selected marker after a tiny delay (required on Android)
+    const timer = setTimeout(() => {
+      const selectedRef = markerRefs.current[selectedCarId];
+      if (selectedRef) {
+        selectedRef.showCallout();
       }
-    },
-    [fetchCarsForRadius, radiusKm]
-  );
+
+      // Hide others
+      Object.entries(markerRefs.current).forEach(([id, ref]) => {
+        if (id !== selectedCarId) {
+          ref?.hideCallout();
+        }
+      });
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [selectedCarId]);
 
   useEffect(() => {
     (async () => {
@@ -558,8 +585,6 @@ export default function NearbyScreen() {
     }
     trackEvent("location_explainer_dismiss", { surface: "nearby_inline" });
   }, []);
-
-  // ... (keep all imports and functions the same until the return statement)
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -822,6 +847,7 @@ export default function NearbyScreen() {
             latitudeDelta: 0.15,
             longitudeDelta: 0.15,
           }}
+          onPress={() => setSelectedCarId(null)}
         >
           {isUsingUserLocation && userLat != null && userLng != null ? (
             <Marker
@@ -835,20 +861,48 @@ export default function NearbyScreen() {
             </Marker>
           ) : null}
 
-          {filteredCarsWithCoords.map((car) => (
-            <Marker
-              key={car.id}
-              coordinate={{
-                latitude: car.pickup!.lat!,
-                longitude: car.pickup!.lng!,
-              }}
-              tracksViewChanges={false}
-            >
-              <View style={styles.priceMarker}>
-                <Text style={styles.priceMarkerText}>${car.pricePerDay}</Text>
-              </View>
-            </Marker>
-          ))}
+          {filteredCarsWithCoords.map((car) => {
+            return (
+              <Marker
+                key={car.id}
+                coordinate={{
+                  latitude: car.pickup!.lat!,
+                  longitude: car.pickup!.lng!,
+                }}
+                ref={(ref) => {
+                  if (ref) markerRefs.current[car.id] = ref;
+                }}
+                onPress={() => {
+                  // Toggle: tap same marker again to close
+                  setSelectedCarId((prev) => (prev === car.id ? null : car.id));
+                }}
+                tracksViewChanges={false}
+              >
+                {/* Price pill with selection highlight */}
+                <View
+                  style={[
+                    styles.priceMarker,
+                    car.id === selectedCarId && styles.priceMarkerSelected,
+                  ]}
+                >
+                  <Text style={styles.priceMarkerText}>${car.pricePerDay}</Text>
+                </View>
+
+                <Callout
+                  tooltip
+                  onPress={(e) => {
+                    // Stop taps inside tooltip from bubbling to map (prevents deselection)
+                    e.stopPropagation();
+                  }}
+                >
+                  {/* Optional: tap tooltip to close */}
+                  <Pressable onPress={() => setSelectedCarId(null)}>
+                    <CarToolTip car={car} />
+                  </Pressable>
+                </Callout>
+              </Marker>
+            );
+          })}
         </MapView>
 
         <Pressable
@@ -1118,7 +1172,6 @@ const styles = StyleSheet.create({
   mapWrap: {
     flex: 1,
     borderRadius: RADIUS.xl,
-    overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(0,0,0,0.08)",
     backgroundColor: "#fff",
@@ -1169,4 +1222,8 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   priceMarkerText: { color: "#fff", fontSize: 12, fontWeight: "900" },
+  priceMarkerSelected: {
+    backgroundColor: COLORS.amber,
+    transform: [{ scale: 1.1 }],
+  },
 });
