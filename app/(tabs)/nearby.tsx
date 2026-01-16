@@ -112,6 +112,12 @@ export default function NearbyScreen() {
   const shouldZoomRef = useRef(true);
   const markerRefs = useRef<Record<string, any>>({});
   const suppressNextMapPressRef = useRef(false);
+  const regionRef = useRef<{
+    latitude: number;
+    longitude: number;
+    latitudeDelta: number;
+    longitudeDelta: number;
+  } | null>(null);
 
   const API_BASE = useMemo(
     () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
@@ -405,12 +411,21 @@ export default function NearbyScreen() {
 
     if (typeof lat !== "number" || typeof lng !== "number") return;
 
-    // keep same zoom; only move center
-    mapRef.current?.animateCamera(
+    const r = regionRef.current;
+
+    const latitudeDelta = r?.latitudeDelta ?? 0.12;
+    const longitudeDelta = r?.longitudeDelta ?? 0.12;
+
+    const OFFSET_FACTOR = 0.25;
+
+    mapRef.current?.animateToRegion(
       {
-        center: { latitude: lat, longitude: lng },
+        latitude: lat + latitudeDelta * OFFSET_FACTOR,
+        longitude: lng,
+        latitudeDelta,
+        longitudeDelta,
       },
-      { duration: 250 }
+      250
     );
   }, [selectedCarId, filteredCarsWithCoords]);
 
@@ -838,6 +853,9 @@ export default function NearbyScreen() {
             longitude: -114.0719,
             latitudeDelta: 0.15,
             longitudeDelta: 0.15,
+          }}
+          onRegionChangeComplete={(r) => {
+            regionRef.current = r;
           }}
           onPress={(e) => {
             if (suppressNextMapPressRef.current) {
