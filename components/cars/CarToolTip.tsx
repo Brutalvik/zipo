@@ -1,7 +1,6 @@
 import React from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
 
-// IMPORTANT: accept the shape you're actually passing from NearbyScreen
 type ApiCarLike = {
   imageUrl: string;
   pricePerDay: number;
@@ -11,16 +10,20 @@ type ApiCarLike = {
 
 type CarToolTipProps = {
   car: ApiCarLike;
+  isSelected: boolean; // ✅ required
 };
 
-export function CarToolTip({ car }: CarToolTipProps) {
+export function CarToolTip({ car, isSelected }: CarToolTipProps) {
   return (
     <View style={styles.container}>
-      {/* arrow */}
       <View style={styles.arrow} />
 
       <View style={styles.card}>
-        <Image source={{ uri: car.imageUrl }} style={styles.image} />
+        <Image
+          key={car.imageUrl}
+          source={{ uri: car.imageUrl }}
+          style={styles.image}
+        />
 
         <View style={styles.info}>
           <Text style={styles.price}>${car.pricePerDay} / day</Text>
@@ -39,11 +42,7 @@ export function CarToolTip({ car }: CarToolTipProps) {
 }
 
 const styles = StyleSheet.create({
-  // ✅ NO absolute positioning in Callout content
-  container: {
-    alignItems: "center",
-  },
-
+  container: { alignItems: "center" },
   arrow: {
     width: 0,
     height: 0,
@@ -53,10 +52,8 @@ const styles = StyleSheet.create({
     borderLeftColor: "transparent",
     borderRightColor: "transparent",
     borderTopColor: "#fff",
-    // small overlap so arrow touches card
     marginBottom: -1,
   },
-
   card: {
     width: 220,
     backgroundColor: "#fff",
@@ -64,41 +61,11 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     elevation: 6,
   },
-
-  image: {
-    width: "100%",
-    height: 110,
-    backgroundColor: "#eee",
-  },
-
-  info: {
-    padding: 10,
-  },
-
-  price: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-
-  type: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 2,
-  },
-
-  ratingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 4,
-  },
-
-  star: {
-    color: "#F5A623",
-    marginRight: 4,
-  },
-
-  ratingText: {
-    fontSize: 12,
-    fontWeight: "500",
-  },
+  image: { width: "100%", height: 110, backgroundColor: "#eee" },
+  info: { padding: 10 },
+  price: { fontSize: 14, fontWeight: "700" },
+  type: { fontSize: 12, color: "#666", marginTop: 2 },
+  ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
+  star: { color: "#F5A623", marginRight: 4 },
+  ratingText: { fontSize: 12, fontWeight: "500" },
 });

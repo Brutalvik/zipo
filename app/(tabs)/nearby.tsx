@@ -111,6 +111,7 @@ export default function NearbyScreen() {
   const mapRef = useRef<MapView>(null);
   const shouldZoomRef = useRef(true);
   const markerRefs = useRef<Record<string, any>>({});
+  const suppressNextMapPressRef = useRef(false);
 
   const API_BASE = useMemo(
     () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
@@ -394,33 +395,6 @@ export default function NearbyScreen() {
   //   },
   //   [fetchCarsForRadius, radiusKm]
   // );
-
-  useEffect(() => {
-    if (!selectedCarId) {
-      // Hide all callouts
-      Object.values(markerRefs.current).forEach((ref) => {
-        ref?.hideCallout();
-      });
-      return;
-    }
-
-    // Show callout for selected marker after a tiny delay (required on Android)
-    const timer = setTimeout(() => {
-      const selectedRef = markerRefs.current[selectedCarId];
-      if (selectedRef) {
-        selectedRef.showCallout();
-      }
-
-      // Hide others
-      Object.entries(markerRefs.current).forEach(([id, ref]) => {
-        if (id !== selectedCarId) {
-          ref?.hideCallout();
-        }
-      });
-    }, 100);
-
-    return () => clearTimeout(timer);
-  }, [selectedCarId]);
 
   useEffect(() => {
     (async () => {
@@ -847,7 +821,14 @@ export default function NearbyScreen() {
             latitudeDelta: 0.15,
             longitudeDelta: 0.15,
           }}
-          onPress={() => setSelectedCarId(null)}
+          onPress={(e) => {
+            if (suppressNextMapPressRef.current) {
+              suppressNextMapPressRef.current = false;
+              return;
+            }
+            e.stopPropagation();
+            setSelectedCarId(null);
+          }}
         >
           {isUsingUserLocation && userLat != null && userLng != null ? (
             <Marker
@@ -860,8 +841,9 @@ export default function NearbyScreen() {
               </View>
             </Marker>
           ) : null}
-
           {filteredCarsWithCoords.map((car) => {
+            const isSelected = car.id == selectedCarId;
+
             return (
               <Marker
                 key={car.id}
@@ -873,32 +855,22 @@ export default function NearbyScreen() {
                   if (ref) markerRefs.current[car.id] = ref;
                 }}
                 onPress={() => {
-                  // Toggle: tap same marker again to close
+                  suppressNextMapPressRef.current = true;
                   setSelectedCarId((prev) => (prev === car.id ? null : car.id));
                 }}
-                tracksViewChanges={false}
+                tracksViewChanges={isSelected}
               >
-                {/* Price pill with selection highlight */}
                 <View
                   style={[
                     styles.priceMarker,
-                    car.id === selectedCarId && styles.priceMarkerSelected,
+                    isSelected && styles.priceMarkerSelected,
                   ]}
                 >
                   <Text style={styles.priceMarkerText}>${car.pricePerDay}</Text>
                 </View>
 
-                <Callout
-                  tooltip
-                  onPress={(e) => {
-                    // Stop taps inside tooltip from bubbling to map (prevents deselection)
-                    e.stopPropagation();
-                  }}
-                >
-                  {/* Optional: tap tooltip to close */}
-                  <Pressable onPress={() => setSelectedCarId(null)}>
-                    <CarToolTip car={car} />
-                  </Pressable>
+                <Callout tooltip>
+                  <CarToolTip car={car} isSelected={isSelected} />
                 </Callout>
               </Marker>
             );
