@@ -26,6 +26,7 @@ import { updateUser } from "@/redux/slices/authSlice";
 import Button from "@/components/Button/Button";
 import { fetchHostMe } from "@/redux/thunks/hostThunk";
 import { selectHost } from "@/redux/slices/hostSlice";
+import { useFreshAvatarUrl } from "@/hooks/useFreshAvatarUrl";
 
 type MenuItem = {
   id: string;
@@ -71,6 +72,8 @@ export default function ProfileScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const { user, logout } = useAuth();
+
+  useFreshAvatarUrl({ refreshMeOnFocus: false, forceSignedUrlOnFocus: true });
   const host = useAppSelector(selectHost);
   const hostExists = !!host;
 
@@ -173,12 +176,7 @@ export default function ProfileScreen() {
     (user as any)?.phone_e164 ??
     "";
 
-  const avatarUrl =
-    (user as any)?.photoURL ||
-    (user as any)?.profile_photo_url ||
-    (user as any)?.photoUrl ||
-    (user as any)?.avatarUrl ||
-    undefined;
+  const avatarUrl = (user as any)?.profile_photo_url ?? undefined;
 
   const hasAvatar = !!avatarUrl;
 

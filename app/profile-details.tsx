@@ -27,14 +27,13 @@ import ChangePasswordModal from "@/components/ChangePasswordModal";
 
 import { verifyBeforeUpdateEmail } from "firebase/auth";
 
-import {
-  refreshSignedAvatarUrl,
-  uploadUserAvatar,
-} from "@/redux/thunks/avatarThunk";
+import { uploadUserAvatar } from "@/redux/thunks/avatarThunk";
 import {
   selectAvatarUploadStatus,
   selectAvatarUploadError,
 } from "@/redux/slices/avatarSlice";
+
+import { useFreshAvatarUrl } from "@/hooks/useFreshAvatarUrl";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -190,6 +189,8 @@ export default function ProfileDetailsScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((s) => s.auth);
+
+  useFreshAvatarUrl({ refreshMeOnFocus: false, forceSignedUrlOnFocus: true });
 
   const avatarUploadStatus = useAppSelector(selectAvatarUploadStatus);
   const avatarUploadError = useAppSelector(selectAvatarUploadError);
@@ -597,7 +598,6 @@ export default function ProfileDetailsScreen() {
       ).unwrap();
 
       await refreshMe();
-      await dispatch(refreshSignedAvatarUrl()).unwrap();
 
       track("profile_details_photo_upload_success", {});
     } catch (e: any) {
@@ -653,13 +653,13 @@ export default function ProfileDetailsScreen() {
     setAvatarKey((k) => k + 1);
   }, [profilePhotoUrl]);
 
-  useEffect(() => {
-    if (!dbUser?.profile_photo_path) return;
+  // useEffect(() => {
+  //   if (!dbUser?.profile_photo_path) return;
 
-    if (dbUser?.profile_photo_url) return;
+  //   if (dbUser?.profile_photo_url) return;
 
-    dispatch(refreshSignedAvatarUrl());
-  }, [dispatch, dbUser?.profile_photo_path, dbUser?.profile_photo_url]);
+  //   dispatch(refreshSignedAvatarUrl());
+  // }, [dispatch, dbUser?.profile_photo_path, dbUser?.profile_photo_url]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
