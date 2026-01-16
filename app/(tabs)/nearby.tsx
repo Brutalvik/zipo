@@ -397,6 +397,24 @@ export default function NearbyScreen() {
   // );
 
   useEffect(() => {
+    if (!selectedCarId) return;
+
+    const car = filteredCarsWithCoords.find((c) => c.id === selectedCarId);
+    const lat = car?.pickup?.lat;
+    const lng = car?.pickup?.lng;
+
+    if (typeof lat !== "number" || typeof lng !== "number") return;
+
+    // keep same zoom; only move center
+    mapRef.current?.animateCamera(
+      {
+        center: { latitude: lat, longitude: lng },
+      },
+      { duration: 250 }
+    );
+  }, [selectedCarId, filteredCarsWithCoords]);
+
+  useEffect(() => {
     (async () => {
       try {
         const v = await AsyncStorage.getItem(LOCATION_EXPLAINER_KEY);
@@ -856,7 +874,21 @@ export default function NearbyScreen() {
                 }}
                 onPress={() => {
                   suppressNextMapPressRef.current = true;
-                  setSelectedCarId((prev) => (prev === car.id ? null : car.id));
+
+                  setSelectedCarId((prev) => {
+                    const next = prev === car.id ? null : car.id;
+
+                    if (next) {
+                      const lat = car.pickup!.lat!;
+                      const lng = car.pickup!.lng!;
+                      mapRef.current?.animateCamera(
+                        { center: { latitude: lat, longitude: lng } },
+                        { duration: 250 }
+                      );
+                    }
+
+                    return next;
+                  });
                 }}
                 tracksViewChanges={isSelected}
               >
