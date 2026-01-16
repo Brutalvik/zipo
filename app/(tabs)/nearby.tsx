@@ -15,7 +15,13 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import MapView, { Marker, PROVIDER_GOOGLE, Callout } from "react-native-maps";
+import MapView, {
+  Marker,
+  PROVIDER_GOOGLE,
+  Callout,
+  Circle,
+} from "react-native-maps";
+
 import * as Location from "expo-location";
 import Slider from "@react-native-community/slider";
 import { Feather } from "@expo/vector-icons";
@@ -366,6 +372,18 @@ export default function NearbyScreen() {
     },
     [API_BASE]
   );
+
+  useEffect(() => {
+    if (effectiveLat == null || effectiveLng == null) return;
+
+    if (selectedCarId) return;
+
+    const PAD = 1.25;
+    mapRef.current?.animateToRegion(
+      regionFromRadius(effectiveLat, effectiveLng, radiusKm * PAD),
+      200
+    );
+  }, [effectiveLat, effectiveLng, radiusKm, selectedCarId]);
 
   useEffect(() => {
     lastSelectedRef.current = selectedCarId;
@@ -835,6 +853,16 @@ export default function NearbyScreen() {
             setSelectedCarId(null);
           }}
         >
+          {effectiveLat != null && effectiveLng != null ? (
+            <Circle
+              center={{ latitude: effectiveLat, longitude: effectiveLng }}
+              radius={radiusKm * 1000}
+              strokeWidth={2}
+              strokeColor="rgba(17,24,39,0.28)"
+              fillColor="rgba(17,24,39,0.10)"
+            />
+          ) : null}
+
           {isUsingUserLocation && userLat != null && userLng != null ? (
             <Marker
               coordinate={{ latitude: userLat, longitude: userLng }}
