@@ -14,7 +14,6 @@ export const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    // Store the FULL user object here
     signIn: (state, action: PayloadAction<IUser>) => {
       state.isAuthenticated = true;
       state.user = action.payload;
@@ -24,10 +23,21 @@ export const authSlice = createSlice({
       state.user = null;
     },
 
-    // Optional: update only some fields (nice for mode switch / profile patch)
     updateUser: (state, action: PayloadAction<Partial<IUser>>) => {
       if (!state.user) return;
-      state.user = { ...state.user, ...action.payload };
+
+      const prev = state.user;
+      const patch = action.payload || {};
+
+      const next: any = { ...prev, ...patch };
+      if (
+        (patch as any).profile_photo_url == null &&
+        (prev as any).profile_photo_url
+      ) {
+        next.profile_photo_url = (prev as any).profile_photo_url;
+      }
+
+      state.user = next;
     },
   },
 });

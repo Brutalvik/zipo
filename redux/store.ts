@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "@/redux/slices/authSlice";
 import carsReducer from "@/redux/slices/carSlice";
 import hostReducer from "@/redux/slices/hostSlice";
+import avatarReducer from "@/redux/slices/avatarSlice";
 
 // Configure the store with the reducers
 export const store = configureStore({
@@ -9,6 +10,7 @@ export const store = configureStore({
     auth: authReducer,
     cars: carsReducer,
     host: hostReducer,
+    avatar: avatarReducer,
     // Add other reducers here (e.g., bookingReducer, paymentsReducer)
   },
 });

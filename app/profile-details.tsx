@@ -1,5 +1,5 @@
 // app/(tabs)/profile-details.tsx
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -26,6 +26,15 @@ import ReauthPasswordModal from "@/components/ReauthPasswordModal";
 import ChangePasswordModal from "@/components/ChangePasswordModal";
 
 import { verifyBeforeUpdateEmail } from "firebase/auth";
+
+import {
+  refreshSignedAvatarUrl,
+  uploadUserAvatar,
+} from "@/redux/thunks/avatarThunk";
+import {
+  selectAvatarUploadStatus,
+  selectAvatarUploadError,
+} from "@/redux/slices/avatarSlice";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
@@ -182,7 +191,14 @@ export default function ProfileDetailsScreen() {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((s) => s.auth);
 
+  const avatarUploadStatus = useAppSelector(selectAvatarUploadStatus);
+  const avatarUploadError = useAppSelector(selectAvatarUploadError);
+
+  const isUploadingPhoto = avatarUploadStatus === "loading";
+
   const dbUser = user as any;
+
+  const [avatarKey, setAvatarKey] = React.useState(0);
 
   const fullName =
     dbUser?.full_name ??
@@ -218,12 +234,7 @@ export default function ProfileDetailsScreen() {
     return "Not started";
   }, [kycStatus]);
 
-  const profilePhotoUrl =
-    dbUser?.profile_photo_url ??
-    dbUser?.photoURL ??
-    dbUser?.photoUrl ??
-    dbUser?.avatarUrl ??
-    null;
+  const profilePhotoUrl = dbUser?.profile_photo_url ?? null;
 
   const dobFromDbRaw = dbUser?.date_of_birth ?? null;
   const dobFromDbYmd: string | null =
@@ -255,8 +266,6 @@ export default function ProfileDetailsScreen() {
       new Date(2000, 0, 1)
     );
   });
-
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingRetry, setPendingRetry] = useState<
@@ -555,6 +564,7 @@ export default function ProfileDetailsScreen() {
 
   const pickPhoto = async () => {
     if (isUploadingPhoto) return;
+
     track("profile_details_photo_pick_tap", {});
 
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -571,76 +581,33 @@ export default function ProfileDetailsScreen() {
     });
 
     if (result.canceled) return;
+
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
 
     try {
-      setIsUploadingPhoto(true);
-
-      const current = auth.currentUser;
-      const idToken = await current?.getIdToken(true);
-      if (!idToken) throw new Error("Missing auth token");
-
       track("profile_details_photo_upload_start", {});
 
-      const contentType = "image/jpeg";
+      // mimeType is available on newer expo-image-picker; fallback is handled in thunk
+      await dispatch(
+        uploadUserAvatar({
+          uri: asset.uri,
+          mimeType: (asset as any)?.mimeType ?? null,
+        })
+      ).unwrap();
 
-      const presignRes = await fetch(`${API_BASE}/api/uploads/profile-photo`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ contentType }),
-      });
-
-      const presignText = await presignRes.text();
-      if (!presignRes.ok)
-        throw new Error(presignText || "Failed to prepare upload");
-
-      const presignJson = JSON.parse(presignText);
-      const uploadUrl = presignJson?.uploadUrl;
-      const publicUrl = presignJson?.publicUrl;
-
-      if (!uploadUrl || !publicUrl)
-        throw new Error("Upload URL missing from server response");
-
-      const img = await fetch(asset.uri);
-      const blob = await img.blob();
-
-      const putRes = await fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": contentType },
-        body: blob as any,
-      });
-
-      if (!putRes.ok) throw new Error("Upload failed");
-
-      const saveRes = await fetch(`${API_BASE}/api/users/photo`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ profile_photo_url: publicUrl }),
-      });
-
-      const saveText = await saveRes.text();
-      if (!saveRes.ok) throw new Error(saveText || "Failed to save photo");
-
-      const saveJson = JSON.parse(saveText);
-      if (saveJson?.user) dispatch(updateUser(saveJson.user));
       await refreshMe();
+      await dispatch(refreshSignedAvatarUrl()).unwrap();
 
       track("profile_details_photo_upload_success", {});
     } catch (e: any) {
-      console.warn("photo upload failed", e?.message || e);
-      track("profile_details_photo_upload_failed", {
-        message: e?.message || String(e),
-      });
-      Alert.alert("Upload failed", e?.message || "Could not upload photo.");
-    } finally {
-      setIsUploadingPhoto(false);
+      const msg =
+        typeof e === "string"
+          ? e
+          : e?.message || avatarUploadError || "Could not upload photo.";
+
+      track("profile_details_photo_upload_failed", { message: msg });
+      Alert.alert("Upload failed", msg);
     }
   };
 
@@ -678,6 +645,21 @@ export default function ProfileDetailsScreen() {
     ? `${phonePending} (pending)`
     : phoneE164 || "Not set";
   const kycIsVerified = kycLabel === "Verified";
+
+  console.log("AVATAR URL:", profilePhotoUrl);
+  console.log("AVATAR PATH:", dbUser?.profile_photo_path);
+
+  useEffect(() => {
+    setAvatarKey((k) => k + 1);
+  }, [profilePhotoUrl]);
+
+  useEffect(() => {
+    if (!dbUser?.profile_photo_path) return;
+
+    if (dbUser?.profile_photo_url) return;
+
+    dispatch(refreshSignedAvatarUrl());
+  }, [dispatch, dbUser?.profile_photo_path, dbUser?.profile_photo_url]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -722,6 +704,10 @@ export default function ProfileDetailsScreen() {
                 <Image
                   source={{ uri: profilePhotoUrl }}
                   style={styles.avatar}
+                  onError={(e) =>
+                    console.log("AVATAR_IMAGE_ERROR", e?.nativeEvent)
+                  }
+                  onLoad={() => console.log("AVATAR_IMAGE_LOADED")}
                 />
               ) : (
                 <View style={styles.avatarPlaceholder}>

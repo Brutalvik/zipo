@@ -53,6 +53,9 @@ declare global {
     /** Metadata */
     created_at?: string;
     updated_at?: string;
+
+    profile_photo_url?: string | null;
+    profile_photo_path?: string | null;
   }
 
   /**
