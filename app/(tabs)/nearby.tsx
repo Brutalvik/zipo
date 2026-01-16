@@ -40,6 +40,7 @@ import {
 } from "@/lib/locationHelpers";
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import { CarToolTip } from "@/components/cars/CarToolTip";
+import { useRouter } from "expo-router";
 
 type ApiCar = {
   id: string;
@@ -116,7 +117,6 @@ export default function NearbyScreen() {
   const tabBarHeight = useBottomTabBarHeight();
   const mapRef = useRef<MapView>(null);
   const shouldZoomRef = useRef(true);
-  const markerRefs = useRef<Record<string, any>>({});
   const suppressNextMapPressRef = useRef(false);
   const regionRef = useRef<{
     latitude: number;
@@ -131,6 +131,8 @@ export default function NearbyScreen() {
     () => (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/$/, ""),
     []
   );
+
+  const router = useRouter();
 
   const [isLoading, setIsLoading] = useState(false);
 
@@ -901,8 +903,19 @@ export default function NearbyScreen() {
                   <Text style={styles.priceMarkerText}>${car.pricePerDay}</Text>
                 </View>
 
-                <Callout tooltip>
-                  <CarToolTip car={car} isSelected={isSelected} />
+                <Callout
+                  tooltip
+                  onPress={() =>
+                    router.push(`/car/car-details?carId=${car.id}`)
+                  }
+                >
+                  <CarToolTip
+                    car={car}
+                    isSelected={isSelected}
+                    onPress={() =>
+                      router.push(`/car/car-details?carId=${car.id}`)
+                    }
+                  />
                 </Callout>
               </Marker>
             );

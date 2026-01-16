@@ -126,6 +126,13 @@ export default function HomeScreen() {
     return ["All", ...labels];
   }, []);
 
+  const goToCarDetails = useCallback(
+    (carId: string) => {
+      router.push(`/car/car-details?carId=${carId}`);
+    },
+    [router]
+  );
+
   const loadHome = useCallback(async () => {
     await Promise.all([
       dispatch(fetchFeaturedCars(10)),
@@ -342,6 +349,7 @@ export default function HomeScreen() {
           renderItem={({ item }) => (
             <SearchResultCard
               car={item}
+              onPress={() => goToCarDetails(item.id)}
               isFav={!!favIds[item.id]}
               onPressFav={() =>
                 setFavIds((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
@@ -428,10 +436,7 @@ export default function HomeScreen() {
         numColumns={2}
         columnWrapperStyle={styles.gridRow}
         renderItem={({ item }) => (
-          <CarGridCard
-            car={item}
-            onPress={() => router.push(`/car/car-details?carId=${item.id}`)}
-          />
+          <CarGridCard car={item} onPress={() => goToCarDetails(item.id)} />
         )}
         refreshControl={
           <RefreshControl refreshing={isLoading} onRefresh={loadHome} />
@@ -491,7 +496,12 @@ export default function HomeScreen() {
                 showsHorizontalScrollIndicator={false}
                 data={popular}
                 keyExtractor={(c) => c.id}
-                renderItem={({ item }) => <BestCarCard car={item} />}
+                renderItem={({ item }) => (
+                  <BestCarCard
+                    car={item}
+                    onPress={() => goToCarDetails(item.id)}
+                  />
+                )}
                 contentContainerStyle={{ paddingTop: 10, paddingBottom: 4 }}
               />
             </View>
@@ -504,7 +514,10 @@ export default function HomeScreen() {
               />
               {nearbyCar ? (
                 <View style={{ marginTop: 10 }}>
-                  <NearbyHeroCard car={nearbyCar} />
+                  <NearbyHeroCard
+                    car={nearbyCar}
+                    onPress={() => goToCarDetails(nearbyCar.id)}
+                  />
                 </View>
               ) : null}
             </View>

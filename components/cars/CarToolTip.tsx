@@ -33,9 +33,10 @@ type ApiCarLike = {
 type CarToolTipProps = {
   car: ApiCarLike;
   isSelected: boolean;
+  onPress?: () => void;
 };
 
-export function CarToolTip({ car }: CarToolTipProps) {
+export function CarToolTip({ car, onPress }: CarToolTipProps) {
   const [liked, setLiked] = useState(false);
 
   const showRating = useMemo(() => {
@@ -70,7 +71,11 @@ export function CarToolTip({ car }: CarToolTipProps) {
     <View style={styles.container}>
       <View style={styles.arrow} />
 
-      <View style={styles.card}>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+        accessibilityRole="button"
+      >
         <View style={styles.hero}>
           <Image source={{ uri: car.imageUrl }} style={styles.image} />
           <View style={styles.overlay} />
@@ -80,29 +85,6 @@ export function CarToolTip({ car }: CarToolTipProps) {
               <Text style={styles.badgePillText}>{badge}</Text>
             </BlurView>
           ) : null}
-
-          <Pressable
-            onPress={() => {
-              setLiked((v) => {
-                const next = !v;
-                console.log("[favorite] toggled", {
-                  carId: car.id,
-                  liked: next,
-                });
-                return next;
-              });
-            }}
-            style={styles.heartBtn}
-            hitSlop={12}
-          >
-            <BlurView intensity={55} tint="light" style={styles.heartBlur}>
-              <Ionicons
-                name={liked ? "heart" : "heart-outline"}
-                size={20}
-                color={liked ? "#E11D48" : "#0B1220"}
-              />
-            </BlurView>
-          </Pressable>
 
           <View style={styles.heroText}>
             {title ? (
@@ -163,10 +145,10 @@ export function CarToolTip({ car }: CarToolTipProps) {
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Tap to view details →</Text>
+          <Text style={styles.footerText}>Tap to view details</Text>
           <Feather name="arrow-right" size={14} color="#111827" />
         </View>
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -202,6 +184,8 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     elevation: 10,
   },
+
+  cardPressed: { transform: [{ scale: 0.99 }], opacity: 0.96 },
 
   hero: { position: "relative" },
   image: { width: "100%", height: 135, backgroundColor: "#eee" },
