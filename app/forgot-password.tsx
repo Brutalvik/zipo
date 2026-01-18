@@ -27,7 +27,6 @@ export default function ForgotPasswordScreen() {
 
   const handleReset = async () => {
     const e = email.trim().toLowerCase();
-    console.log("EMAIL : ", e);
     if (!e) {
       Alert.alert("Error", "Please enter your email.");
       return;
@@ -40,8 +39,12 @@ export default function ForgotPasswordScreen() {
     setIsLoading(true);
     try {
       // Optional: pass redirect URL if you set it (see Option 2)
-      const request = await sendPasswordResetEmail(auth, e);
-      console.log("REQUEST, ", request);
+
+      await sendPasswordResetEmail(auth, e, {
+        url: "https://zipo-zipo.web.app/reset-password",
+        handleCodeInApp: true,
+      });
+
       Alert.alert(
         "Check your email",
         "If an account exists for this email, you’ll receive a password reset link shortly."
