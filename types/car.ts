@@ -69,7 +69,7 @@ export type Car = {
   /* =========================
    * Status / lifecycle
    * ========================= */
-  status?: "draft" | "active" | "inactive" | "unlisted" | "paused" | "deleted";
+  status?: "draft" | "active" | "inactive" | "deleted";
   createdAt?: string;
   updatedAt?: string;
 

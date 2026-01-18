@@ -14,6 +14,15 @@ if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
 
 const HOST_CARS_API_BASE = `${API_BASE}/api/host/cars`;
 
+export type HostCarsPage = {
+  items: HostCar[];
+  page?: {
+    limit?: number;
+    offset?: number;
+    total?: number;
+  };
+};
+
 /**
  * Convert ANY backend car shape (snake_case, camelCase, mixed)
  * into the single UI-facing CarApi shape your app expects.
@@ -113,6 +122,37 @@ function toCarApi(raw: any): CarApi {
   };
 }
 
+/** =========================================================================
+ * Host fetch helper (consistent headers + consistent error parsing)
+ * ========================================================================= */
+async function hostFetch<T = any>(
+  path: string,
+  token: string,
+  init?: RequestInit
+): Promise<T> {
+  if (!token) throw new Error("Missing auth token");
+
+  const res = await fetch(`${HOST_CARS_API_BASE}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || "Request failed");
+
+  if (!text) return {} as T;
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // backend returned non-json but ok; return as any
+    return text as unknown as T;
+  }
+}
+
 /** ===== Host APIs (auth) ===== */
 
 /** Fetch single host car by ID with auth */
@@ -121,18 +161,13 @@ export async function fetchHostCar(
   token: string
 ): Promise<HostCar> {
   if (!carId) throw new Error("Missing carId");
-  if (!token) throw new Error("Missing auth token");
 
-  const res = await fetch(
-    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+  const json = await hostFetch<{ car?: HostCar }>(
+    `/${encodeURIComponent(carId)}`,
+    token
   );
 
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || "Failed to fetch car");
-
-  const json = JSON.parse(text);
-  const car: HostCar | null = json?.car ?? null;
+  const car = json?.car ?? null;
   if (!car) throw new Error("Car not found");
   return car;
 }
@@ -142,59 +177,78 @@ export async function patchHostCar(
   carId: string,
   token: string,
   body: Partial<HostCar>
-) {
+): Promise<HostCar> {
   if (!carId) throw new Error("Missing carId");
-  if (!token) throw new Error("Missing auth token");
 
-  const res = await fetch(
-    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
+  const json = await hostFetch<{ car?: HostCar }>(
+    `/${encodeURIComponent(carId)}`,
+    token,
     {
       method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body ?? {}),
     }
   );
 
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || "Failed to update car");
-
-  const json = JSON.parse(text);
-  return json?.car;
+  const car = json?.car ?? null;
+  if (!car) throw new Error("Failed to update car");
+  return car;
 }
 
 /** Publish host car */
-export async function publishHostCar(carId: string, token: string) {
+export async function publishHostCar(
+  carId: string,
+  token: string
+): Promise<HostCar | true> {
   if (!carId) throw new Error("Missing carId");
-  if (!token) throw new Error("Missing auth token");
 
-  const res = await fetch(
-    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}/publish`,
-    { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+  const json = await hostFetch<{ car?: HostCar }>(
+    `/${encodeURIComponent(carId)}/publish`,
+    token,
+    { method: "POST" }
   );
 
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || "Failed to publish car");
-
-  const json = JSON.parse(text);
   return json?.car ?? true;
 }
 
-/** Deactivate host car */
-export async function deleteHostCar(carId: string, token: string) {
+/**
+ * Delist / delete host car
+ * NOTE: You had TWO functions doing the same DELETE.
+ * Keep ONE canonical function and alias the old name to avoid breaking imports.
+ */
+export async function delistHostCar(
+  carId: string,
+  token: string
+): Promise<true> {
   if (!carId) throw new Error("Missing carId");
 
-  const res = await fetch(
-    `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
-    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
-  );
-
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || "Failed to delete car");
+  await hostFetch(`/${encodeURIComponent(carId)}`, token, { method: "DELETE" });
 
   return true;
+}
+
+/** Backwards-compatible alias (so you don’t break existing imports) */
+export async function deleteHostCar(
+  carId: string,
+  token: string
+): Promise<true> {
+  return delistHostCar(carId, token);
+}
+
+/** Relist / activate host car */
+export async function relistHostCar(
+  carId: string,
+  token: string
+): Promise<HostCar | true> {
+  if (!carId) throw new Error("Missing carId");
+
+  const json = await hostFetch<{ car?: HostCar }>(
+    `/${encodeURIComponent(carId)}/activate`,
+    token,
+    { method: "POST" }
+  );
+
+  return json?.car ?? true;
 }
 
 /** ===== Bounding Box Utilities ===== */
@@ -221,16 +275,12 @@ type AnyCarsResponse =
   | { items?: unknown; item?: unknown; car?: unknown; page?: unknown };
 
 function normalizeCarsList(payload: AnyCarsResponse): CarsListResponse {
-  // 1) Backend returned an array directly: [ ...cars ]
   if (Array.isArray(payload)) {
-    return {
-      items: payload.filter(Boolean).map(toCarApi),
-    };
+    return { items: payload.filter(Boolean).map(toCarApi) };
   }
 
   const p: any = payload ?? {};
 
-  // 2) Backend returned { items: [...] , page: {...} }
   if (Array.isArray(p.items)) {
     return {
       items: p.items.filter(Boolean).map(toCarApi),
@@ -245,13 +295,9 @@ function normalizeCarsList(payload: AnyCarsResponse): CarsListResponse {
     };
   }
 
-  // 3) Backend returned { item: {...} } or { car: {...} }
   const single = p.item ?? p.car ?? null;
-  if (single) {
-    return { items: [toCarApi(single)] };
-  }
+  if (single) return { items: [toCarApi(single)] };
 
-  // 4) Fallback
   return { items: [] };
 }
 
@@ -310,13 +356,13 @@ export async function fetchPopularCars(limit = 10) {
   );
   return normalizeCarsList(payload);
 }
-//Fetch car by id
+
+/** Fetch car by id */
 export async function fetchCarById(id: string): Promise<CarApi | null> {
   const cleanId = String(id ?? "")
     .trim()
     .split("?")[0]
     .split("#")[0];
-
   if (!cleanId) return null;
 
   // cache-buster as a REAL query param (not inside the id)
@@ -461,4 +507,28 @@ export async function geocodeCity(
   } catch {
     return null;
   }
+}
+
+// fetch host cars page
+export async function fetchHostCarsPage(
+  token: string,
+  params?: { limit?: number; offset?: number }
+): Promise<HostCarsPage> {
+  const limit = Number(params?.limit ?? 20);
+  const offset = Number(params?.offset ?? 0);
+
+  const json = await hostFetch<HostCarsPage>(
+    `?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(
+      String(offset)
+    )}`,
+    token
+  );
+
+  return {
+    items: Array.isArray((json as any)?.items) ? (json as any).items : [],
+    page:
+      (json as any)?.page && typeof (json as any).page === "object"
+        ? (json as any).page
+        : undefined,
+  };
 }

@@ -21,12 +21,18 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Swipeable } from "react-native-gesture-handler";
+
 import { auth } from "@/services/firebase";
 import { normStatus } from "@/app/(hosttabs)/helpers";
+import {
+  delistHostCar,
+  fetchHostCarsPage,
+  relistHostCar,
+} from "@/services/carsApi";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
-if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
-
+// -------------------------
+// Types
+// -------------------------
 type HostCar = {
   id: string;
   title?: string | null;
@@ -50,12 +56,18 @@ type HostCar = {
 type StatusFilter = "all" | "active" | "draft" | "inactive";
 type SortKey = "updated" | "price" | "status" | "city";
 
+// -------------------------
+// Auth helper
+// -------------------------
 async function getIdToken() {
   const token = await auth.currentUser?.getIdToken(true);
   if (!token) throw new Error("Missing auth token");
   return token;
 }
 
+// -------------------------
+// URL helpers
+// -------------------------
 function isHttpUrl(u: string) {
   return /^https?:\/\//i.test(u);
 }
@@ -69,8 +81,8 @@ function getGalleryUrls(car: HostCar): string[] {
       typeof it === "string"
         ? it
         : typeof (it as any)?.url === "string"
-        ? String((it as any).url)
-        : "";
+          ? String((it as any).url)
+          : "";
     if (u && isHttpUrl(u)) urls.push(u);
   }
 
@@ -87,6 +99,9 @@ function getGalleryUrls(car: HostCar): string[] {
   return Array.from(new Set(urls));
 }
 
+// -------------------------
+// Formatting helpers
+// -------------------------
 function money(n: any, currency: string) {
   const num = Number(n);
   if (!Number.isFinite(num)) return "";
@@ -152,6 +167,9 @@ function computeCompletion(car: HostCar, photoCount: number) {
   return { pct, missing };
 }
 
+// -------------------------
+// UI pieces
+// -------------------------
 function Badge({
   label,
   tone = "neutral",
@@ -163,17 +181,17 @@ function Badge({
     tone === "green"
       ? styles.badgeGreen
       : tone === "amber"
-      ? styles.badgeAmber
-      : tone === "muted"
-      ? styles.badgeMuted
-      : styles.badgeNeutral;
+        ? styles.badgeAmber
+        : tone === "muted"
+          ? styles.badgeMuted
+          : styles.badgeNeutral;
 
   const textStyle =
     tone === "green"
       ? styles.badgeTextGreen
       : tone === "amber"
-      ? styles.badgeTextAmber
-      : styles.badgeText;
+        ? styles.badgeTextAmber
+        : styles.badgeText;
 
   return (
     <View style={[styles.badge, toneStyle]}>
@@ -193,13 +211,6 @@ function CarCover({ url, photoCount }: { url: string; photoCount: number }) {
             source={{ uri: url }}
             style={styles.cover}
             resizeMode="cover"
-            onError={(ev) => {
-              console.warn("CAR COVER IMAGE FAILED", {
-                cover: url,
-                nativeEvent: (ev as any)?.nativeEvent,
-                nativeError: (ev as any)?.nativeEvent?.error,
-              });
-            }}
           />
           <View style={styles.coverGradientTop} />
           <View style={styles.coverGradientBottom} />
@@ -263,8 +274,8 @@ function CarCard({
   onEdit,
   onAvailability,
   onPreview,
-  onDelete,
-  onActivate,
+  onDelistCar,
+  onRelistCar,
 }: {
   car: HostCar;
   derived: {
@@ -283,8 +294,8 @@ function CarCard({
   onEdit: (car: HostCar) => void;
   onAvailability: (car: HostCar) => void;
   onPreview: (car: HostCar) => void;
-  onDelete: (car: HostCar) => void;
-  onActivate: (car: HostCar) => void;
+  onDelistCar: (car: HostCar) => void;
+  onRelistCar: (car: HostCar) => void;
 }) {
   const title = String(car?.title || "Untitled");
   const statusText = statusLabel(car?.status);
@@ -293,19 +304,19 @@ function CarCard({
     derived.statusNorm === "active"
       ? styles.statusPillActive
       : derived.statusNorm === "draft"
-      ? styles.statusPillDraft
-      : derived.statusNorm === "inactive"
-      ? styles.statusPillInactive
-      : styles.statusPillNeutral;
+        ? styles.statusPillDraft
+        : derived.statusNorm === "inactive"
+          ? styles.statusPillInactive
+          : styles.statusPillNeutral;
 
   const statusTextStyle =
     derived.statusNorm === "active"
       ? styles.statusTextActive
       : derived.statusNorm === "draft"
-      ? styles.statusTextDraft
-      : derived.statusNorm === "inactive"
-      ? styles.statusTextInactive
-      : styles.statusText;
+        ? styles.statusTextDraft
+        : derived.statusNorm === "inactive"
+          ? styles.statusTextInactive
+          : styles.statusText;
 
   const renderLeftActions = () => (
     <View style={styles.swipeLeftWrap}>
@@ -324,7 +335,7 @@ function CarCard({
         label="Delete"
         icon="trash-2"
         tone="danger"
-        onPress={() => onDelete(car)}
+        onPress={() => onDelistCar(car)}
       />
     </View>
   );
@@ -352,10 +363,8 @@ function CarCard({
         ]}
         accessibilityRole="button"
       >
-        {/* BIG image on top */}
         <CarCover url={derived.coverUrl} photoCount={derived.photoCount} />
 
-        {/* Details below */}
         <View style={styles.cardBody}>
           <View style={styles.titleRow}>
             <Text style={styles.title} numberOfLines={2}>
@@ -448,10 +457,9 @@ function CarCard({
               <Text style={styles.qActionText}>Preview</Text>
             </Pressable>
 
-            {/* ✅ New: show relist/reactivate only when inactive */}
             {derived.statusNorm === "inactive" ? (
               <Pressable
-                onPress={() => onActivate(car)}
+                onPress={() => onRelistCar(car)}
                 style={({ pressed }) => [
                   styles.qActionBtn,
                   styles.qActionBtnPrimary,
@@ -538,26 +546,19 @@ export default function HostCars() {
         const token = await getIdToken();
         const nextOffset = reset ? 0 : offsetRef.current;
 
-        const res = await fetch(
-          `${API_BASE}/api/host/cars?limit=${encodeURIComponent(
-            String(limit)
-          )}&offset=${encodeURIComponent(String(nextOffset))}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
+        const json = await fetchHostCarsPage(token, {
+          limit,
+          offset: nextOffset,
+        });
 
-        const text = await res.text();
-        if (!res.ok) throw new Error(text || "Failed to load cars");
-
-        const json = JSON.parse(text);
-        const listRaw = Array.isArray(json?.items) ? json.items : [];
-        const list: HostCar[] = listRaw.filter(Boolean);
+        const list: HostCar[] = Array.isArray(json?.items) ? json.items : [];
 
         const pageTotal =
           typeof json?.page?.total === "number"
             ? json.page.total
-            : Number.isFinite(Number(json?.page?.total))
-            ? Number(json.page.total)
-            : null;
+            : Number.isFinite(Number((json as any)?.page?.total))
+              ? Number((json as any).page.total)
+              : null;
 
         totalRef.current = pageTotal;
 
@@ -591,7 +592,7 @@ export default function HostCars() {
   useEffect(() => {
     if (refresh === "1") {
       fetchPage({ reset: true }).catch((e) =>
-        console.warn("refresh-after-delete failed", e?.message || e)
+        console.warn("refresh-after-change failed", e?.message || e)
       );
       router.setParams({ refresh: "" });
     }
@@ -623,15 +624,7 @@ export default function HostCars() {
     [router]
   );
 
-  const onEditCar = useCallback(
-    (car: HostCar) => {
-      router.push({
-        pathname: "/(app)/host-car-details",
-        params: { carId: car.id },
-      });
-    },
-    [router]
-  );
+  const onEditCar = onPressCar;
 
   const onAvailabilityCar = useCallback(
     (car: HostCar) => {
@@ -653,7 +646,7 @@ export default function HostCars() {
     [router]
   );
 
-  const deleteCar = useCallback(
+  const delistCar = useCallback(
     (car: HostCar) => {
       Alert.alert(
         "Delete car?",
@@ -666,17 +659,7 @@ export default function HostCars() {
             onPress: async () => {
               try {
                 const token = await getIdToken();
-                const res = await fetch(
-                  `${API_BASE}/api/host/cars/${encodeURIComponent(car.id)}`,
-                  {
-                    method: "DELETE",
-                    headers: { Authorization: `Bearer ${token}` },
-                  }
-                );
-
-                const text = await res.text();
-                if (!res.ok) throw new Error(text || "Failed to delete car");
-
+                await delistHostCar(car.id, token);
                 fetchPage({ reset: true }).catch((e) =>
                   console.warn("refresh-after-delete failed", e?.message || e)
                 );
@@ -694,8 +677,7 @@ export default function HostCars() {
     [fetchPage]
   );
 
-  // ✅ New: Activate (Relist) endpoint
-  const activateCar = useCallback(
+  const relistCar = useCallback(
     (car: HostCar) => {
       Alert.alert("Relist car?", "This will set your car back to Active.", [
         { text: "Cancel", style: "cancel" },
@@ -704,19 +686,7 @@ export default function HostCars() {
           onPress: async () => {
             try {
               const token = await getIdToken();
-              const res = await fetch(
-                `${API_BASE}/api/host/cars/${encodeURIComponent(
-                  car.id
-                )}/activate`,
-                {
-                  method: "POST",
-                  headers: { Authorization: `Bearer ${token}` },
-                }
-              );
-
-              const text = await res.text();
-              if (!res.ok) throw new Error(text || "Failed to relist car");
-
+              await relistHostCar(car.id, token);
               fetchPage({ reset: true }).catch((e) =>
                 console.warn("refresh-after-activate failed", e?.message || e)
               );
@@ -953,10 +923,10 @@ export default function HostCars() {
               {sortKey === "updated"
                 ? "Updated"
                 : sortKey === "price"
-                ? "Price"
-                : sortKey === "status"
-                ? "Status"
-                : "City"}
+                  ? "Price"
+                  : sortKey === "status"
+                    ? "Status"
+                    : "City"}
             </Text>
           </Pressable>
         </View>
@@ -969,10 +939,10 @@ export default function HostCars() {
                 k === "all"
                   ? "All"
                   : k === "active"
-                  ? "Active"
-                  : k === "draft"
-                  ? "Draft"
-                  : "Inactive";
+                    ? "Active"
+                    : k === "draft"
+                      ? "Draft"
+                      : "Inactive";
               return (
                 <Pressable
                   key={k}
@@ -1030,8 +1000,8 @@ export default function HostCars() {
                   onEdit={onEditCar}
                   onAvailability={onAvailabilityCar}
                   onPreview={onPreviewCar}
-                  onDelete={deleteCar}
-                  onActivate={activateCar}
+                  onDelistCar={delistCar}
+                  onRelistCar={relistCar}
                 />
               );
             }}
@@ -1075,6 +1045,7 @@ export default function HostCars() {
   );
 }
 
+// ✅ styles unchanged (keep your existing styles object here)
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#F6F7FB" },
   listWrap: { flex: 1 },
@@ -1217,9 +1188,7 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.55)",
   },
 
-  segmentTextOn: {
-    color: "#111827",
-  },
+  segmentTextOn: { color: "#111827" },
 
   listContent: {
     paddingHorizontal: 18,
@@ -1227,7 +1196,6 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
   },
 
-  // ✅ PREMIUM CARD (vertical)
   card: {
     backgroundColor: "#FFFFFF",
     borderRadius: 26,
@@ -1243,7 +1211,6 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
   },
 
-  // ✅ BIG IMAGE
   coverWrap: {
     width: "100%",
     height: 170,
@@ -1455,7 +1422,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
-  // ✅ primary relist button style
   qActionBtnPrimary: {
     backgroundColor: "#111827",
     borderColor: "rgba(17,24,39,0.20)",
@@ -1467,11 +1433,8 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.90)",
   },
 
-  qActionTextPrimary: {
-    color: "#FFFFFF",
-  },
+  qActionTextPrimary: { color: "#FFFFFF" },
 
-  // swipe areas
   swipeLeftWrap: {
     flex: 1,
     justifyContent: "center",
@@ -1515,7 +1478,6 @@ const styles = StyleSheet.create({
     color: "#111827",
   },
 
-  // skeleton
   skelBlock: {
     backgroundColor: "rgba(17,24,39,0.06)",
     borderColor: "rgba(17,24,39,0.10)",
@@ -1527,7 +1489,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(17,24,39,0.06)",
   },
 
-  // empty
   empty: {
     paddingTop: 50,
     paddingBottom: 30,
@@ -1536,15 +1497,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
 
-  emptyTitle: { fontSize: 14, fontWeight: "900", color: "rgba(17,24,39,0.70)" },
-
-  emptySub: {
-    textAlign: "center",
-    fontSize: 12,
-    fontWeight: "800",
-    color: "rgba(17,24,39,0.40)",
-    lineHeight: 16,
-    maxWidth: 280,
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: "rgba(17,24,39,0.70)",
   },
 
   emptyPrimaryBtn: {

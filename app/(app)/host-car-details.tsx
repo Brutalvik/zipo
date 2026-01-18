@@ -31,20 +31,20 @@ import DraggableFlatList, {
 import { HostCar } from "@/types/car";
 import { useIdToken } from "@/hooks/useIdToken";
 import {
-  deleteHostCar,
+  delistHostCar,
   fetchHostCar,
   patchHostCar,
   publishHostCar,
+  relistHostCar,
 } from "@/services/carsApi";
-
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
-if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
 
 type FeatureItem = {
   id: string;
   label: string;
   icon: keyof typeof Feather.glyphMap;
 };
+
+const ACTIVE = "active";
 
 // -------------------------
 // URL helpers
@@ -336,12 +336,8 @@ function ImageCarousel({ urls }: { urls: string[] }) {
 export default function HostCarDetails() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const {
-    token,
-    loading: tokenLoading,
-    error: tokenError,
-    refreshToken,
-  } = useIdToken();
+  const { token } = useIdToken();
+
   const carId = String(params?.carId || "").trim();
 
   const [car, setCar] = useState<HostCar | null>(null);
@@ -349,16 +345,26 @@ export default function HostCarDetails() {
   const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const cover = useMemo(() => (car ? getCoverUrl(car) : ""), [car]);
-  const gallery = useMemo(() => (car ? getGalleryUrls(car) : []), [car]);
-
-  // ✅ local order for photos (UI-only reorder)
+  // Local order for photos (UI-only reorder)
   const [galleryLocal, setGalleryLocal] = useState<string[]>([]);
+  const [initialGallery, setInitialGallery] = useState<string[]>([]);
 
-  // -------- Local editable state (NOT auto-saving) --------
+  // Local editable state (NOT auto-saving)
   const [odoText, setOdoText] = useState("");
   const [amenitiesLocal, setAmenitiesLocal] = useState<string[]>([]);
   const [blockedLocal, setBlockedLocal] = useState<string[]>([]); // keep sorted
+
+  // Range selection UI
+  const todayKey = useMemo(() => toDateKey(new Date()), []);
+  const [rangeStart, setRangeStart] = useState<string | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<string | null>(null);
+  const [displayRange, setDisplayRange] = useState<{
+    start: string;
+    end: string;
+  } | null>(null);
+  const [calendarNote, setCalendarNote] = useState<string>("");
+
+  const [addFeaturesOpen, setAddFeaturesOpen] = useState(false);
 
   const blockedSet = useMemo(() => new Set(blockedLocal), [blockedLocal]);
   const amenitiesSet = useMemo(() => new Set(amenitiesLocal), [amenitiesLocal]);
@@ -369,26 +375,8 @@ export default function HostCarDetails() {
     blocked: string[];
   } | null>(null);
 
-  // Range selection UI
-  const todayKey = useMemo(() => toDateKey(new Date()), []);
-  const [rangeStart, setRangeStart] = useState<string | null>(null);
-  const [rangeEnd, setRangeEnd] = useState<string | null>(null);
-
-  const [displayRange, setDisplayRange] = useState<{
-    start: string;
-    end: string;
-  } | null>(null);
-  const [calendarNote, setCalendarNote] = useState<string>("");
-
-  const [addFeaturesOpen, setAddFeaturesOpen] = useState(false);
-  const [initialGallery, setInitialGallery] = useState<string[]>([]);
-
-  const odometerLocked = useMemo(
-    () => Number(car?.odometer_km ?? 0) > 0,
-    [car?.odometer_km]
-  );
   const isActive = useMemo(
-    () => String(car?.status || "").toLowerCase() === "active",
+    () => String(car?.status || "").toLowerCase() === ACTIVE,
     [car?.status]
   );
 
@@ -396,6 +384,18 @@ export default function HostCarDetails() {
     () => (isActive ? "Update" : "Publish"),
     [isActive]
   );
+
+  const odometerLocked = useMemo(
+    () => Number(car?.odometer_km ?? 0) > 0,
+    [car?.odometer_km]
+  );
+
+  const cover = useMemo(() => (car ? getCoverUrl(car) : ""), [car]);
+
+  const heroImages = useMemo(() => {
+    const xs = galleryLocal.length ? galleryLocal : cover ? [cover] : [];
+    return xs;
+  }, [galleryLocal, cover]);
 
   const isDirty = useMemo(() => {
     const init = initialRef.current;
@@ -413,27 +413,28 @@ export default function HostCarDetails() {
     );
   }, [odoText, amenitiesLocal, blockedLocal, galleryLocal, initialGallery]);
 
+  const isBusy = deleting || loading || busy;
+
   const loadCar = useCallback(async () => {
     if (!carId) throw new Error("Missing carId");
     if (!token) throw new Error("Missing auth token");
 
     setLoading(true);
     try {
-      // ✅ Fetch car via centralized API
-      const c: HostCar = await fetchHostCar(carId, token);
+      const c = await fetchHostCar(carId, token);
       setCar(c);
 
-      // === Odometer ===
+      // Odometer
       const odo = Number(c?.odometer_km ?? 0) || 0;
       setOdoText(odo ? String(odo) : "");
 
-      // === Amenities ===
+      // Amenities
       const amenities = uniqSortedStrings(
         Array.isArray(c?.features?.amenities) ? c.features.amenities : []
       );
       setAmenitiesLocal(amenities);
 
-      // === Blocked dates ===
+      // Blocked dates (no past)
       const blocked = uniqSortedStrings(
         Array.isArray(c?.requirements?.availability?.blockedDates)
           ? c.requirements.availability.blockedDates
@@ -441,15 +442,15 @@ export default function HostCarDetails() {
       ).filter((k) => !isBeforeDateKey(k, todayKey));
       setBlockedLocal(blocked);
 
-      // === Dirty detection reference ===
+      // Dirty detection baseline
       initialRef.current = { odometer_km: odo, amenities, blocked };
 
-      // === Gallery ===
+      // Gallery
       const currentGallery = getGalleryUrls(c);
       setGalleryLocal(currentGallery);
       setInitialGallery(currentGallery);
 
-      // === Reset temporary UI state ===
+      // Reset temp selection UI
       setRangeStart(null);
       setRangeEnd(null);
       setDisplayRange(null);
@@ -462,28 +463,19 @@ export default function HostCarDetails() {
   }, [carId, token, todayKey]);
 
   useEffect(() => {
+    if (!carId) return;
+    if (!token) return;
+
     loadCar().catch((e) => {
       console.warn("load car failed", e?.message || e);
       setLoading(false);
     });
-  }, [loadCar]);
-
-  const patchCar = useCallback(
-    async (patch: Partial<HostCar>) => {
-      if (!carId) throw new Error("Missing carId");
-
-      // Get the token from the hook
-      if (!token) throw new Error("Auth token not available");
-
-      // Use centralized API
-      const updatedCar = await patchHostCar(carId, token, patch);
-      return updatedCar;
-    },
-    [carId, token]
-  );
+  }, [carId, token, loadCar]);
 
   const saveOnly = useCallback(async () => {
     if (!car) throw new Error("Car not loaded");
+    if (!carId) throw new Error("Missing carId");
+    if (!token) throw new Error("Missing auth token");
 
     const amenities = uniqSortedStrings(amenitiesLocal);
     const blocked = uniqSortedStrings(blockedLocal);
@@ -503,13 +495,10 @@ export default function HostCarDetails() {
     }
 
     const patch: any = {
-      // Save amenities
       features: {
         ...(car.features || {}),
         amenities,
       },
-
-      // Save blocked dates
       requirements: {
         ...(car.requirements || {}),
         availability: {
@@ -519,43 +508,37 @@ export default function HostCarDetails() {
           blockedDates: blocked,
         },
       },
-
-      // === SAVE REORDERED PHOTO ORDER ===
-      // Only saved when user taps Update/Publish — not on drag
+      // Save reordered photo order only when user taps Update/Publish
       image_gallery: galleryLocal,
     };
 
-    // Save odometer if not locked
     if (!odometerLocked) {
       patch.odometer_km = odo;
     }
 
-    // Send patch to backend
-    await patchCar(patch);
+    await patchHostCar(carId, token, patch);
 
-    // Reload fresh car data
+    // Refresh & reset dirty baseline
     const fresh = await loadCar();
-
-    // Update initial state so "Unsaved" disappears
     const freshOdo = Number(fresh?.odometer_km ?? 0) || 0;
+
     initialRef.current = {
       odometer_km: freshOdo,
       amenities,
       blocked,
     };
-
-    // Also update initial gallery order so future drags detect changes correctly
-    setInitialGallery(getGalleryUrls(fresh as HostCar));
+    setInitialGallery(getGalleryUrls(fresh));
   }, [
     car,
+    carId,
+    token,
     amenitiesLocal,
     blockedLocal,
     odoText,
     odometerLocked,
     isActive,
-    patchCar,
+    galleryLocal,
     loadCar,
-    galleryLocal, // critical dependency
   ]);
 
   const onPrimaryAction = useCallback(async () => {
@@ -575,8 +558,9 @@ export default function HostCarDetails() {
       setBusy(true);
 
       // Save changes first
-      await saveOnly(); // inside saveOnly, you can use patchHostCar
+      await saveOnly();
 
+      // Publish if needed
       if (!isActive) {
         await publishHostCar(car.id, token);
       }
@@ -644,17 +628,19 @@ export default function HostCarDetails() {
     return () => sub.remove();
   }, [confirmLeave, router]);
 
-  const onDelete = useCallback(() => {
+  const onToggleListStatus = useCallback(() => {
     if (!car) return;
 
     Alert.alert(
-      "Deactivate car?",
-      "This will deactivate the car and remove it from guest board.",
+      isActive ? "Delist this car?" : "Relist this car?",
+      isActive
+        ? "This will hide your car from guests. You can relist it anytime."
+        : "This will make your car visible to guests again.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Deactivate",
-          style: "destructive",
+          text: isActive ? "Delist" : "Relist",
+          style: isActive ? "destructive" : "default",
           onPress: async () => {
             if (!token) {
               Alert.alert("Auth error", "Missing authentication token.");
@@ -663,7 +649,12 @@ export default function HostCarDetails() {
 
             try {
               setDeleting(true);
-              await deleteHostCar(car.id, token);
+
+              if (isActive) {
+                await delistHostCar(car.id, token);
+              } else {
+                await relistHostCar(car.id, token);
+              }
 
               router.replace({
                 pathname: "/(hosttabs)/cars",
@@ -671,8 +662,8 @@ export default function HostCarDetails() {
               });
             } catch (e: any) {
               Alert.alert(
-                "Deactivation failed",
-                e?.message || "Could not deactivate this car."
+                isActive ? "Delist failed" : "Relist failed",
+                e?.message || "Something went wrong."
               );
             } finally {
               setDeleting(false);
@@ -681,7 +672,7 @@ export default function HostCarDetails() {
         },
       ]
     );
-  }, [car, token, router]);
+  }, [car, token, router, isActive]);
 
   // ---------- SMART BLOCK/UNBLOCK ----------
   const applyRangeToggleWithAlert = useCallback(
@@ -698,12 +689,8 @@ export default function HostCarDetails() {
       const rangeLabel = start === end ? start : `${start} → ${end}`;
       const note =
         action === "unblock"
-          ? `This ${
-              start === end ? "date" : "range"
-            } will be unblocked: ${rangeLabel}.`
-          : `This ${
-              start === end ? "date" : "range"
-            } will be blocked: ${rangeLabel}.`;
+          ? `This ${start === end ? "date" : "range"} will be unblocked: ${rangeLabel}.`
+          : `This ${start === end ? "date" : "range"} will be blocked: ${rangeLabel}.`;
 
       Alert.alert(
         action === "unblock" ? "Unblock dates" : "Block dates",
@@ -825,7 +812,7 @@ export default function HostCarDetails() {
     );
   }, [amenitiesLocal]);
 
-  // ✅ Calendar markings for blocked dates (range highlight handled by dayComponent)
+  // Calendar markings for blocked dates (range highlight handled by dayComponent)
   const markedDates = useMemo(() => {
     const out: Record<string, any> = {};
     const visibleBlocked = blockedLocal
@@ -878,19 +865,16 @@ export default function HostCarDetails() {
             resizeMode="cover"
           />
 
-          {/* Number badge (1, 2, 3, ...) */}
           <View style={styles.photoNumberBadge}>
             <Text style={styles.photoNumberText}>{index + 1}</Text>
           </View>
 
-          {/* "Main" badge only on the first photo */}
           {isMain && (
             <View style={styles.mainPhotoBadge}>
               <Text style={styles.mainPhotoText}>Main</Text>
             </View>
           )}
 
-          {/* Drag handle */}
           <View style={styles.dragHandle}>
             <Feather name="move" size={14} color="rgba(255,255,255,0.90)" />
           </View>
@@ -909,6 +893,9 @@ export default function HostCarDetails() {
     }
   }, []);
 
+  const disablePrimary =
+    (primaryLabel === "Update" && !isDirty) || busy || deleting;
+
   if (!carId) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -918,11 +905,6 @@ export default function HostCarDetails() {
       </SafeAreaView>
     );
   }
-
-  const heroImages = useMemo(() => {
-    const xs = galleryLocal.length ? galleryLocal : cover ? [cover] : [];
-    return xs;
-  }, [galleryLocal, cover]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
@@ -944,22 +926,35 @@ export default function HostCarDetails() {
         </Text>
 
         <Pressable
-          onPress={onDelete}
-          disabled={deleting || loading || busy}
+          onPress={onToggleListStatus}
+          disabled={isBusy}
           style={({ pressed }) => [
-            styles.deleteBtn,
-            (deleting || loading || busy) && { opacity: 0.6 },
-            pressed && { opacity: 0.85 },
+            styles.listToggleBtn,
+            isActive ? styles.delistBtn : styles.relistBtn,
+            isBusy && { opacity: 0.6 },
+            pressed &&
+              !isBusy && { opacity: 0.85, transform: [{ scale: 0.99 }] },
           ]}
           accessibilityRole="button"
-          accessibilityLabel="Delete car"
+          accessibilityLabel={isActive ? "Delist car" : "Relist car"}
         >
-          {deleting ? (
+          {isBusy ? (
             <ActivityIndicator />
           ) : (
             <>
-              <Feather name="trash-2" size={16} color="#991B1B" />
-              <Text style={styles.deleteText}>Deactivate</Text>
+              <Feather
+                name={isActive ? "trash-2" : "rotate-cw"}
+                size={16}
+                color={isActive ? "#991B1B" : "#166534"}
+              />
+              <Text
+                style={[
+                  styles.listToggleText,
+                  isActive ? styles.delistText : styles.relistText,
+                ]}
+              >
+                {isActive ? "Delist" : "Relist"}
+              </Text>
             </>
           )}
         </Pressable>
@@ -991,7 +986,7 @@ export default function HostCarDetails() {
                 <View
                   style={[
                     styles.statusPill,
-                    String(car?.status || "").toLowerCase() === "active"
+                    String(car?.status || "").toLowerCase() === ACTIVE
                       ? styles.statusPillActive
                       : null,
                   ]}
@@ -999,7 +994,7 @@ export default function HostCarDetails() {
                   <Text
                     style={[
                       styles.statusText,
-                      String(car?.status || "").toLowerCase() === "active"
+                      String(car?.status || "").toLowerCase() === ACTIVE
                         ? styles.statusTextActive
                         : null,
                     ]}
@@ -1198,7 +1193,6 @@ export default function HostCarDetails() {
                 const isPast = !isSameOrAfter(key, todayKey);
                 const isBlocked = blockedSet.has(key);
 
-                // ✅ selection highlight: always stays on while selecting a range
                 const selecting =
                   !!rangeStart &&
                   (rangeEnd
@@ -1404,9 +1398,7 @@ export default function HostCarDetails() {
               <Pressable
                 onPress={() =>
                   router.push(
-                    `/host-onboarding-photos?carId=${encodeURIComponent(
-                      car.id
-                    )}`
+                    `/host-onboarding-photos?carId=${encodeURIComponent(car.id)}`
                   )
                 }
                 style={({ pressed }) => [
@@ -1460,13 +1452,18 @@ export default function HostCarDetails() {
 
             <Pressable
               onPress={onPrimaryAction}
-              disabled={busy || deleting}
+              disabled={disablePrimary}
               style={({ pressed }) => [
                 styles.primaryBtn,
-                (busy || deleting) && { opacity: 0.6 },
-                pressed && { opacity: 0.9 },
+
+                // disabled state
+                disablePrimary && { opacity: 0.45 },
+
+                // pressed feedback only when enabled
+                pressed && !disablePrimary && { opacity: 0.9 },
               ]}
               accessibilityRole="button"
+              accessibilityState={{ disabled: disablePrimary }}
             >
               {busy ? (
                 <ActivityIndicator />
@@ -1475,9 +1472,16 @@ export default function HostCarDetails() {
                   <Feather
                     name={primaryLabel === "Publish" ? "upload" : "check"}
                     size={16}
-                    color="#111827"
+                    color={disablePrimary ? "rgba(17,24,39,0.45)" : "#111827"}
                   />
-                  <Text style={styles.primaryText}>{primaryLabel}</Text>
+                  <Text
+                    style={[
+                      styles.primaryText,
+                      disablePrimary && { color: "rgba(17,24,39,0.45)" },
+                    ]}
+                  >
+                    {primaryLabel}
+                  </Text>
                 </>
               )}
             </Pressable>
@@ -2096,5 +2100,36 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "900",
     color: "#FFFFFF",
+  },
+  listToggleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+
+  listToggleText: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+
+  delistBtn: {
+    backgroundColor: "#FEE2E2",
+    borderColor: "#FCA5A5",
+  },
+  delistText: {
+    color: "#991B1B",
+  },
+
+  relistBtn: {
+    backgroundColor: "#DCFCE7",
+    borderColor: "#86EFAC",
+  },
+  relistText: {
+    color: "#166534",
   },
 });
