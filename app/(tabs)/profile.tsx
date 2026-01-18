@@ -18,7 +18,6 @@ import {
 } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
 import { useAuth } from "@/hooks/useAuth";
 import { auth } from "@/services/firebase";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
@@ -134,24 +133,16 @@ export default function ProfileScreen() {
     { id: "favorite", label: "Favorite Cars", iconType: "heart" },
     { id: "previous", label: "Previous Rents", iconType: "history" },
     { id: "notif", label: "Notifications", iconType: "bell" },
-    {
-      id: "partners",
-      label: "Become a Partner",
-      iconType: "link" as const,
-      onPress: handleBecomePartner,
-    },
-
-    // Only show if NOT already a host
-    // ...(!hostExists
-    //   ? [
-    //       {
-    //         id: "partners",
-    //         label: "Become a Partner",
-    //         iconType: "link" as const,
-    //         onPress: handleBecomePartner,
-    //       },
-    //     ]
-    //   : []),
+    ...(!hostExists
+      ? [
+          {
+            id: "partners",
+            label: "Become a Partner",
+            iconType: "link" as const,
+            onPress: handleBecomePartner,
+          },
+        ]
+      : []),
   ];
 
   const supportItems: MenuItem[] = [
@@ -201,8 +192,8 @@ export default function ProfileScreen() {
   const anyVerified = emailVerified || phoneVerified;
 
   const statusLine = `${
-    emailVerified ? "Email verified" : "Email not verified"
-  } • ${phoneVerified ? "Phone verified" : "Phone not verified"}`;
+    emailVerified ? "" : "Email not verified"
+  } ${phoneVerified ? "" : "Phone not verified"}`;
 
   const mode: AppMode = (
     (user as any)?.mode === "host" || (user as any)?.mode === "guest"
@@ -358,7 +349,7 @@ export default function ProfileScreen() {
           <View style={styles.headerRow}>
             <Text style={styles.brand}>Zipo</Text>
 
-            {/* ✅ Glass button using your custom component */}
+            {/* Glass button using your custom component */}
             {/* {hostExists ? (
               <View style={{ width: 168 }}>
                 <Button
@@ -398,9 +389,22 @@ export default function ProfileScreen() {
 
               <View style={styles.identityCol}>
                 <TouchableOpacity activeOpacity={0.8}>
-                  <Text style={styles.profileName} numberOfLines={1}>
-                    {displayName}
-                  </Text>
+                  <View style={styles.nameRow}>
+                    <Text style={styles.profileName} numberOfLines={1}>
+                      {displayName}
+                    </Text>
+
+                    <Feather
+                      name={anyVerified ? "check-circle" : "alert-circle"}
+                      size={14}
+                      color={
+                        anyVerified
+                          ? "rgba(16,185,129,0.95)"
+                          : "rgba(245,158,11,0.95)"
+                      }
+                      style={styles.verifyIcon}
+                    />
+                  </View>
                 </TouchableOpacity>
 
                 {!!displayEmail && (
@@ -409,7 +413,7 @@ export default function ProfileScreen() {
                   </Text>
                 )}
 
-                {/* ✅ polished pills */}
+                {/* polished pills */}
                 <View style={styles.modeVerifiedRow}>
                   <View
                     style={[
@@ -432,32 +436,6 @@ export default function ProfileScreen() {
                       ]}
                     >
                       {isHost ? "Host mode" : "Guest mode"}
-                    </Text>
-                  </View>
-
-                  <View
-                    style={[
-                      styles.verifiedPill,
-                      anyVerified ? styles.verifiedYes : styles.verifiedNo,
-                    ]}
-                  >
-                    <Feather
-                      name={anyVerified ? "check-circle" : "alert-circle"}
-                      size={12}
-                      color={
-                        anyVerified
-                          ? "rgba(16,185,129,0.95)"
-                          : "rgba(245,158,11,0.95)"
-                      }
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text
-                      style={[
-                        styles.pillText,
-                        anyVerified ? styles.pillTextYes : styles.pillTextNo,
-                      ]}
-                    >
-                      {anyVerified ? "Verified" : "Not verified"}
                     </Text>
                   </View>
                 </View>
@@ -747,16 +725,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   modePillGuest: {
-    backgroundColor: "rgba(16,185,129,0.10)",
-    borderColor: "rgba(16,185,129,0.18)",
+    backgroundColor: "rgba(17,24,39,0.06)",
+    borderColor: "rgba(17,24,39,0.14)",
   },
+
   modePillHost: {
-    backgroundColor: "rgba(37,99,235,0.08)",
-    borderColor: "rgba(37,99,235,0.18)",
+    backgroundColor: "rgba(37,99,235,0.10)",
+    borderColor: "rgba(37,99,235,0.30)",
   },
   modePillText: { fontSize: 12, fontWeight: "900" },
-  modeTextGuest: { color: "rgba(16,185,129,0.95)" },
-  modeTextHost: { color: "rgba(37,99,235,0.95)" },
+  modeTextGuest: {
+    color: "rgba(17,24,39,0.85)",
+  },
+
+  modeTextHost: {
+    color: "rgba(37,99,235,0.95)",
+  },
 
   verifiedPill: {
     alignSelf: "flex-start",
@@ -896,4 +880,13 @@ const styles = StyleSheet.create({
     color: "rgba(17,24,39,0.88)",
   },
   menuLabelDanger: { color: "rgba(220,38,38,0.85)" },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  verifyIcon: {
+    marginTop: 1,
+  },
 });

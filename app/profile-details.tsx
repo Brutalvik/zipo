@@ -276,10 +276,10 @@ export default function ProfileDetailsScreen() {
     typeof dobFromDbRaw === "string"
       ? dobFromDbRaw.slice(0, 10)
       : dobFromDbRaw instanceof Date
-      ? toLocalYMD(dobFromDbRaw)
-      : dobFromDbRaw
-      ? String(dobFromDbRaw).slice(0, 10)
-      : null;
+        ? toLocalYMD(dobFromDbRaw)
+        : dobFromDbRaw
+          ? String(dobFromDbRaw).slice(0, 10)
+          : null;
 
   const dobLocked = !!dobFromDbYmd;
   const isVerifiedPill = emailVerified || phoneVerified;
@@ -611,7 +611,7 @@ export default function ProfileDetailsScreen() {
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
 
-    // ✅ INSTANT UI: show the picked photo immediately
+    // INSTANT UI: show the picked photo immediately
     const prevStable = lastStableRemoteUrlRef.current;
     setOptimisticAvatarUri(asset.uri);
 
@@ -1005,10 +1005,10 @@ function KeyValueRow({
     valueTone === "good"
       ? styles.toneGood
       : valueTone === "bad"
-      ? styles.toneBad
-      : valueTone === "warn"
-      ? styles.toneWarn
-      : null;
+        ? styles.toneBad
+        : valueTone === "warn"
+          ? styles.toneWarn
+          : null;
 
   return (
     <View style={styles.kvRow}>

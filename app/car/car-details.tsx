@@ -32,6 +32,7 @@ import { mapCarApiToCar } from "@/types/carMapper";
 import { fetchCarById as apiFetchCarById } from "@/services/carsApi";
 import { useAppSelector } from "@/redux/hooks";
 import { COLORS, RADIUS } from "@/theme/ui";
+import { getAvatar } from "@/lib/avatar";
 
 const { width } = Dimensions.get("window");
 const IMAGE_HEIGHT = 280;
@@ -81,7 +82,7 @@ export default function CarDetailsScreen() {
     [user?.kycStatus]
   );
 
-  // ✅ ALWAYS fetch fresh car data when this screen opens / carId changes
+  // ALWAYS fetch fresh car data when this screen opens / carId changes
   useEffect(() => {
     let alive = true;
 
@@ -97,12 +98,7 @@ export default function CarDetailsScreen() {
       setErrorMsg(null);
 
       try {
-        // OPTIONAL cache-buster query to avoid any stale caching layers
-        // If you prefer not to touch backend, this still works because your endpoint ignores unknown query params.
         const apiItem = await apiFetchCarById(`${id}?t=${Date.now()}`);
-        // ^ if your apiFetchCarById already encodes id, remove cache buster here and put it inside carsApi.ts instead.
-        // If this line errors, I’ll show you the safe version right after.
-
         if (!alive) return;
 
         if (!apiItem) {
@@ -128,10 +124,6 @@ export default function CarDetailsScreen() {
       alive = false;
     };
   }, [carId]);
-
-  // ✅ If your apiFetchCarById cannot accept "?t=..." appended, use this instead:
-  //   const apiItem = await apiFetchCarById(id);
-  // and (if needed) we’ll add cache-busting inside services/carsApi.ts cleanly.
 
   const images = useMemo(() => {
     if (!car) return [];
@@ -239,7 +231,8 @@ export default function CarDetailsScreen() {
   }
 
   const hostName = car.host?.name?.trim() || "Host";
-  const hostAvatar = car.host?.avatarUrl || "https://i.pravatar.cc/100?img=5"; // fallback
+  const hostAvatar = getAvatar(car.host?.avatarUrl);
+
   const hostVerified = !!car.host?.isVerified;
 
   return (
@@ -304,7 +297,16 @@ export default function CarDetailsScreen() {
           {/* Owner Profile (REAL DATA) */}
           <View style={styles.ownerSection}>
             <View style={styles.ownerRow}>
-              <Image source={{ uri: hostAvatar }} style={styles.ownerAvatar} />
+              <Image
+                source={hostAvatar}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: "#eee",
+                }}
+                resizeMode="cover"
+              />
               <View style={styles.ownerInfo}>
                 <Text style={styles.ownerName}>
                   {hostName}{" "}

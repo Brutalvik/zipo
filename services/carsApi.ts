@@ -310,9 +310,7 @@ export async function fetchPopularCars(limit = 10) {
   );
   return normalizeCarsList(payload);
 }
-
-// ✅ FIXED: normalize to CarApi so mapCarApiToCar always gets the right shape
-// ✅ Always fresh + never breaks UUID
+//Fetch car by id
 export async function fetchCarById(id: string): Promise<CarApi | null> {
   const cleanId = String(id ?? "")
     .trim()
