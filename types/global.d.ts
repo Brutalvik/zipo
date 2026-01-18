@@ -37,7 +37,7 @@ declare global {
     phoneVerified?: boolean;
 
     /** Guest / Host mode */
-    mode: UserMode;
+    mode?: UserMode;
 
     /** Account status flags (future-proof) */
     status?: "active" | "suspended" | "deleted";
@@ -56,6 +56,8 @@ declare global {
 
     profile_photo_url?: string | null;
     profile_photo_path?: string | null;
+
+    providerId?: any;
   }
 
   /**

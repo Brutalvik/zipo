@@ -12,6 +12,7 @@ const PUBLIC_ROUTES = [
   "/signup",
   "/verify-email",
   "/verify-phone",
+  "/forgot-password",
 ];
 
 function AuthGuard({ children }: { children: React.ReactNode }) {

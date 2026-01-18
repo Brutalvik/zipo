@@ -1,10 +1,5 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -141,9 +136,11 @@ export default function HomeScreen() {
     ]);
   }, [dispatch]);
 
-  useEffect(() => {
-    loadHome();
-  }, [loadHome]);
+  useFocusEffect(
+    useCallback(() => {
+      loadHome();
+    }, [loadHome])
+  );
 
   const nearbyCar = featured[0] ?? popular[0] ?? cars[0] ?? null;
 

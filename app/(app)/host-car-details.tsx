@@ -62,8 +62,8 @@ function getGalleryUrls(car: HostCar): string[] {
       typeof it === "string"
         ? it
         : typeof (it as any)?.url === "string"
-        ? String((it as any).url)
-        : "";
+          ? String((it as any).url)
+          : "";
     if (u && isHttpUrl(u)) urls.push(u);
   }
 
@@ -582,7 +582,10 @@ export default function HostCarDetails() {
       }
 
       Alert.alert("Updated", "Car details updated.");
-      router.replace("/(hosttabs)/cars");
+      router.replace({
+        pathname: "/(hosttabs)/cars",
+        params: { refresh: "1" },
+      });
     } catch (e: any) {
       const msg = e?.message || "Could not complete this action.";
       if (String(msg).includes("200,000")) {
@@ -1214,10 +1217,10 @@ export default function HostCarDetails() {
                   ? isSingle
                     ? styles.selSingle
                     : isStart
-                    ? styles.selStart
-                    : isEnd
-                    ? styles.selEnd
-                    : styles.selMid
+                      ? styles.selStart
+                      : isEnd
+                        ? styles.selEnd
+                        : styles.selMid
                   : null;
 
                 const onPress = () => {

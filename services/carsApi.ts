@@ -7,14 +7,100 @@ import type {
   CarItemResponse,
   CarsItemsResponse,
 } from "@/types/carApi";
-import { HostCar } from "@/types/car";
+import type { HostCar } from "@/types/car";
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE!;
 if (!API_BASE) throw new Error("EXPO_PUBLIC_API_BASE is not set");
 
 const HOST_CARS_API_BASE = `${API_BASE}/api/host/cars`;
 
-/** Fetch single car by ID with auth */
+/**
+ * Convert ANY backend car shape (snake_case, camelCase, mixed)
+ * into the single UI-facing CarApi shape your app expects.
+ *
+ * IMPORTANT:
+ * - Hero photo should follow your host finalize/reorder behavior:
+ *   prefer first gallery item's url, else fallback to imageUrl/image_path.
+ */
+function toCarApi(raw: any): CarApi {
+  const rawGallery = raw?.gallery ?? raw?.image_gallery ?? null;
+
+  const firstGalleryUrl =
+    Array.isArray(rawGallery) && rawGallery.length > 0
+      ? String(rawGallery[0]?.url ?? rawGallery[0] ?? "").trim()
+      : "";
+
+  const imageUrlCandidate = String(
+    raw?.imageUrl ?? raw?.image_url ?? raw?.imagePath ?? raw?.image_path ?? ""
+  ).trim();
+
+  return {
+    id: String(raw?.id ?? ""),
+    title: raw?.title ?? null,
+
+    vehicleType: raw?.vehicleType ?? raw?.vehicle_type ?? null,
+    transmission: raw?.transmission ?? null,
+    fuelType: raw?.fuelType ?? raw?.fuel_type ?? null,
+
+    seats: typeof raw?.seats === "number" ? raw.seats : (raw?.seats ?? null),
+    year: typeof raw?.year === "number" ? raw.year : (raw?.year ?? null),
+
+    currency: raw?.currency ?? null,
+    pricePerDay:
+      typeof raw?.pricePerDay === "number"
+        ? raw.pricePerDay
+        : typeof raw?.price_per_day === "number"
+          ? raw.price_per_day
+          : (raw?.pricePerDay ?? raw?.price_per_day ?? null),
+
+    rating:
+      typeof raw?.rating === "number"
+        ? raw.rating
+        : typeof raw?.rating_avg === "number"
+          ? raw.rating_avg
+          : (raw?.rating ?? raw?.rating_avg ?? null),
+
+    reviews:
+      typeof raw?.reviews === "number"
+        ? raw.reviews
+        : typeof raw?.rating_count === "number"
+          ? raw.rating_count
+          : (raw?.reviews ?? raw?.rating_count ?? null),
+
+    status: raw?.status ?? null,
+
+    address: {
+      countryCode: raw?.address?.countryCode ?? raw?.country_code ?? null,
+      city: raw?.address?.city ?? raw?.city ?? null,
+      area: raw?.address?.area ?? raw?.area ?? null,
+      fullAddress: raw?.address?.fullAddress ?? raw?.full_address ?? null,
+    },
+
+    pickup: {
+      lat: raw?.pickup?.lat ?? raw?.pickup_lat ?? null,
+      lng: raw?.pickup?.lng ?? raw?.pickup_lng ?? null,
+    },
+
+    hasImage: !!(raw?.hasImage ?? raw?.has_image),
+    imagePublic: !!(raw?.imagePublic ?? raw?.image_public),
+    imagePath: raw?.imagePath ?? raw?.image_path ?? null,
+
+    // ✅ hero image preference: gallery[0].url > imageUrl > image_path
+    imageUrl: firstGalleryUrl || imageUrlCandidate || null,
+
+    gallery: rawGallery,
+
+    isPopular: !!(raw?.isPopular ?? raw?.is_popular),
+    isFeatured: !!(raw?.isFeatured ?? raw?.is_featured),
+
+    createdAt: raw?.createdAt ?? raw?.created_at ?? null,
+    updatedAt: raw?.updatedAt ?? raw?.updated_at ?? null,
+  };
+}
+
+/** ===== Host APIs (auth) ===== */
+
+/** Fetch single host car by ID with auth */
 export async function fetchHostCar(
   carId: string,
   token: string
@@ -24,9 +110,7 @@ export async function fetchHostCar(
 
   const res = await fetch(
     `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
+    { headers: { Authorization: `Bearer ${token}` } }
   );
 
   const text = await res.text();
@@ -73,10 +157,7 @@ export async function publishHostCar(carId: string, token: string) {
 
   const res = await fetch(
     `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}/publish`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    }
+    { method: "POST", headers: { Authorization: `Bearer ${token}` } }
   );
 
   const text = await res.text();
@@ -86,16 +167,13 @@ export async function publishHostCar(carId: string, token: string) {
   return json?.car ?? true;
 }
 
-// ** Deactivate host car */
+/** Deactivate host car */
 export async function deleteHostCar(carId: string, token: string) {
   if (!carId) throw new Error("Missing carId");
 
   const res = await fetch(
     `${HOST_CARS_API_BASE}/${encodeURIComponent(carId)}`,
-    {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    }
+    { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
   );
 
   const text = await res.text();
@@ -125,29 +203,40 @@ type AnyCarsResponse =
   | CarsItemsResponse
   | CarItemResponse
   | CarApi[]
-  | { items?: unknown; item?: unknown; page?: unknown };
-
-function isCarApi(x: unknown): x is CarApi {
-  return !!x && typeof x === "object" && "id" in (x as any);
-}
+  | { items?: unknown; item?: unknown; car?: unknown; page?: unknown };
 
 function normalizeCarsList(payload: AnyCarsResponse): CarsListResponse {
+  // 1) Backend returned an array directly: [ ...cars ]
   if (Array.isArray(payload)) {
-    return { items: payload.filter(isCarApi) };
-  }
-
-  const p: any = payload ?? {};
-  if (Array.isArray(p.items)) {
     return {
-      items: p.items.filter(isCarApi),
-      page: p.page && typeof p.page === "object" ? p.page : undefined,
+      items: payload.filter(Boolean).map(toCarApi),
     };
   }
 
-  if (p.item && isCarApi(p.item)) {
-    return { items: [p.item] };
+  const p: any = payload ?? {};
+
+  // 2) Backend returned { items: [...] , page: {...} }
+  if (Array.isArray(p.items)) {
+    return {
+      items: p.items.filter(Boolean).map(toCarApi),
+      page:
+        p.page && typeof p.page === "object"
+          ? {
+              limit: Number(p.page.limit ?? 20),
+              offset: Number(p.page.offset ?? 0),
+              total: Number(p.page.total ?? p.items.length),
+            }
+          : undefined,
+    };
   }
 
+  // 3) Backend returned { item: {...} } or { car: {...} }
+  const single = p.item ?? p.car ?? null;
+  if (single) {
+    return { items: [toCarApi(single)] };
+  }
+
+  // 4) Fallback
   return { items: [] };
 }
 
@@ -207,11 +296,12 @@ export async function fetchPopularCars(limit = 10) {
   return normalizeCarsList(payload);
 }
 
-export async function fetchCarById(id: string) {
-  const payload = await apiGet<CarItemResponse>(
-    `/api/cars/${encodeURIComponent(id)}`
-  );
-  return payload?.item ?? null;
+// ✅ FIXED: normalize to CarApi so mapCarApiToCar always gets the right shape
+export async function fetchCarById(id: string): Promise<CarApi | null> {
+  const payload = await apiGet<any>(`/api/cars/${encodeURIComponent(id)}`);
+  const raw = payload?.item ?? payload?.car ?? payload ?? null;
+  if (!raw) return null;
+  return toCarApi(raw);
 }
 
 /** ===== Radius-Based Fetch + Coordinate Helpers ===== */
@@ -277,11 +367,12 @@ export async function fetchCarsForRadius(
   try {
     const resp = await fetch(url);
     const json = await resp.json();
+
     const listRaw = Array.isArray((json as any)?.items)
       ? (json as any).items
       : Array.isArray(json)
-      ? json
-      : [];
+        ? json
+        : [];
 
     const list: any[] = Array.isArray(listRaw) ? listRaw.filter(Boolean) : [];
 
@@ -290,19 +381,19 @@ export async function fetchCarsForRadius(
         typeof c?.pickup?.lat === "number"
           ? c.pickup.lat
           : typeof c?.pickup_lat === "number"
-          ? c.pickup_lat
-          : typeof c?.pickupLat === "number"
-          ? c.pickupLat
-          : null;
+            ? c.pickup_lat
+            : typeof c?.pickupLat === "number"
+              ? c.pickupLat
+              : null;
 
       const pickupLng =
         typeof c?.pickup?.lng === "number"
           ? c.pickup.lng
           : typeof c?.pickup_lng === "number"
-          ? c.pickup_lng
-          : typeof c?.pickupLng === "number"
-          ? c.pickupLng
-          : null;
+            ? c.pickup_lng
+            : typeof c?.pickupLng === "number"
+              ? c.pickupLng
+              : null;
 
       return {
         id: String(c.id),
@@ -321,10 +412,7 @@ export async function fetchCarsForRadius(
           area: c?.address?.area ?? c?.area ?? null,
           fullAddress: c?.address?.fullAddress ?? c?.full_address ?? null,
         },
-        pickup: {
-          lat: pickupLat,
-          lng: pickupLng,
-        },
+        pickup: { lat: pickupLat, lng: pickupLng },
       };
     });
   } catch (e) {
