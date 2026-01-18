@@ -42,6 +42,14 @@ export type CarApi = {
 
   createdAt: string | null;
   updatedAt: string | null;
+
+  host?: {
+    id: string;
+    name: string | null;
+    avatarUrl: string | null;
+    phone: string | null;
+    isVerified: boolean;
+  } | null;
 };
 
 // responses your backend uses today

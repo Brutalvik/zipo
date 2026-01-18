@@ -31,7 +31,13 @@ export function mapCarApiToCar(api: CarApi): Car {
     title: api.title?.trim() || "Untitled car",
 
     imageUrl,
-    imageGallery: Array.isArray(api.gallery) ? (api.gallery as any[]) : [],
+    imageGallery: Array.isArray(api.gallery)
+      ? (api.gallery as any[])
+          .map((g) => (typeof g === "string" ? g : g?.url))
+          .filter(
+            (u): u is string => typeof u === "string" && u.trim().length > 0
+          )
+      : [],
     hasImage: !!api.hasImage,
     imagePublic: !!api.imagePublic,
 
@@ -58,6 +64,15 @@ export function mapCarApiToCar(api: CarApi): Car {
     pickupLat: api.pickup?.lat ?? undefined,
     pickupLng: api.pickup?.lng ?? undefined,
     pickupAddress: api.address?.fullAddress ?? undefined,
+    host: api.host
+      ? {
+          id: String(api.host.id),
+          name: api.host.name ?? null,
+          avatarUrl: api.host.avatarUrl ?? null,
+          phone: api.host.phone ?? null,
+          isVerified: !!api.host.isVerified,
+        }
+      : null,
 
     status: (api.status ?? undefined) as Car["status"],
     createdAt: api.createdAt ?? undefined,

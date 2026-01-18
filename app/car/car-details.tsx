@@ -1,4 +1,10 @@
-import React, { useMemo, useState, useRef, useCallback } from "react";
+import React, {
+  useMemo,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+} from "react";
 import {
   View,
   Text,
@@ -13,16 +19,18 @@ import {
   TextInput,
   Switch,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
-import { useAppSelector } from "@/redux/hooks";
-import { selectCars } from "@/redux/slices/carSlice";
 import CustomCalendar from "@/components/common/CustomCalendar";
-
 import type { Car } from "@/types/car";
+import type { CarApi } from "@/types/carApi";
+import { mapCarApiToCar } from "@/types/carMapper";
+import { fetchCarById as apiFetchCarById } from "@/services/carsApi";
+import { useAppSelector } from "@/redux/hooks";
 import { COLORS, RADIUS } from "@/theme/ui";
 
 const { width } = Dimensions.get("window");
@@ -38,15 +46,17 @@ type BookingFormData = {
   returnDate: Date | null;
 };
 
+type LoadState = "idle" | "loading" | "ready" | "error";
+
 export default function CarDetailsScreen() {
   const router = useRouter();
   const { carId } = useLocalSearchParams<{ carId: string }>();
 
-  const cars = useAppSelector(selectCars);
   const user = useAppSelector((s) => s.auth.user);
 
-  // DA&A: Using useMemo for car lookup to avoid O(n) re-scans on every render
-  const car = useMemo(() => cars.find((c) => c.id === carId), [cars, carId]);
+  const [car, setCar] = useState<Car | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [isFavorite, setIsFavorite] = useState(false);
@@ -66,21 +76,74 @@ export default function CarDetailsScreen() {
 
   const flatListRef = useRef<FlatList>(null);
 
-  // KYC status memoized
   const needsKyc = useMemo(
     () => user?.kycStatus !== "verified",
     [user?.kycStatus]
   );
 
-  // Image Processing Logic
+  // ✅ ALWAYS fetch fresh car data when this screen opens / carId changes
+  useEffect(() => {
+    let alive = true;
+
+    async function load() {
+      const id = String(carId ?? "").trim();
+      if (!id) {
+        setLoadState("error");
+        setErrorMsg("Missing carId");
+        return;
+      }
+
+      setLoadState("loading");
+      setErrorMsg(null);
+
+      try {
+        // OPTIONAL cache-buster query to avoid any stale caching layers
+        // If you prefer not to touch backend, this still works because your endpoint ignores unknown query params.
+        const apiItem = await apiFetchCarById(`${id}?t=${Date.now()}`);
+        // ^ if your apiFetchCarById already encodes id, remove cache buster here and put it inside carsApi.ts instead.
+        // If this line errors, I’ll show you the safe version right after.
+
+        if (!alive) return;
+
+        if (!apiItem) {
+          setLoadState("error");
+          setErrorMsg("Car not found");
+          setCar(null);
+          return;
+        }
+
+        const uiCar = mapCarApiToCar(apiItem as CarApi);
+        setCar(uiCar);
+        setLoadState("ready");
+      } catch (e: any) {
+        if (!alive) return;
+        setLoadState("error");
+        setErrorMsg(e?.message ?? "Failed to load car");
+        setCar(null);
+      }
+    }
+
+    load();
+    return () => {
+      alive = false;
+    };
+  }, [carId]);
+
+  // ✅ If your apiFetchCarById cannot accept "?t=..." appended, use this instead:
+  //   const apiItem = await apiFetchCarById(id);
+  // and (if needed) we’ll add cache-busting inside services/carsApi.ts cleanly.
+
   const images = useMemo(() => {
     if (!car) return [];
     const urls = new Set<string>();
-    if (car.imageUrl) urls.add(car.imageUrl);
-    car.imageGallery?.forEach((img: any) => {
+
+    if (car.imageUrl) urls.add(String(car.imageUrl));
+
+    (car.imageGallery ?? []).forEach((img: any) => {
       const url = typeof img === "string" ? img : img?.url;
-      if (url) urls.add(url);
+      if (url) urls.add(String(url));
     });
+
     return Array.from(urls);
   }, [car]);
 
@@ -91,6 +154,7 @@ export default function CarDetailsScreen() {
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!images.length) return;
       const index = Math.round(event.nativeEvent.contentOffset.x / width);
       setActiveIndex(index % images.length);
     },
@@ -119,7 +183,6 @@ export default function CarDetailsScreen() {
     return Math.max(days, 1) * car.pricePerDay;
   }, [car, bookingForm.pickupDate, bookingForm.returnDate]);
 
-  // Logic to handle selection without state collisions
   const handleDateSelect = useCallback(
     (selectedDate: Date) => {
       if (showDatePicker === "pickup") {
@@ -148,7 +211,36 @@ export default function CarDetailsScreen() {
     console.log("Processing Booking...", bookingForm);
   };
 
-  if (!car) return null;
+  // ---- Loading / error states (prevents your "imageUrl of undefined" crash) ----
+  if (loadState === "loading" || loadState === "idle") {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" />
+          <Text style={styles.loadingText}>Loading car details…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (loadState === "error" || !car) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top"]}>
+        <View style={styles.center}>
+          <Text style={styles.errorTitle}>Couldn’t load this car</Text>
+          <Text style={styles.errorMsg}>{errorMsg ?? "Unknown error"}</Text>
+
+          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+            <Text style={styles.backBtnText}>Go back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const hostName = car.host?.name?.trim() || "Host";
+  const hostAvatar = car.host?.avatarUrl || "https://i.pravatar.cc/100?img=5"; // fallback
+  const hostVerified = !!car.host?.isVerified;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -185,6 +277,7 @@ export default function CarDetailsScreen() {
             })}
             initialScrollIndex={images.length > 1 ? images.length : 0}
           />
+
           <Pressable
             style={styles.favBtn}
             onPress={() => setIsFavorite(!isFavorite)}
@@ -199,36 +292,29 @@ export default function CarDetailsScreen() {
         </View>
 
         <View style={styles.content}>
-          <Text style={styles.title}>
-            {car.year} {car.title}
-          </Text>
-          <Text style={styles.description}>
-            Premium specification vehicle at an affordable price.
-          </Text>
+          <Text style={styles.title}>{car.title}</Text>
 
-          {/* RESTORED: Ratings */}
+          {/* Ratings */}
           <View style={styles.ratingRow}>
-            <Text style={styles.rating}>{car.rating?.toFixed(1) || "5.0"}</Text>
+            <Text style={styles.rating}>{car.rating?.toFixed(1) || "0.0"}</Text>
             <Text style={styles.star}>⭐</Text>
-            <Text style={styles.reviewCount}>
-              ({car.reviews || 0}+ Reviews)
-            </Text>
+            <Text style={styles.reviewCount}>({car.reviews || 0} Reviews)</Text>
           </View>
 
-          {/* Owner Profile */}
+          {/* Owner Profile (REAL DATA) */}
           <View style={styles.ownerSection}>
             <View style={styles.ownerRow}>
-              <Image
-                source={{ uri: "https://i.pravatar.cc/100?img=5" }}
-                style={styles.ownerAvatar}
-              />
+              <Image source={{ uri: hostAvatar }} style={styles.ownerAvatar} />
               <View style={styles.ownerInfo}>
                 <Text style={styles.ownerName}>
-                  Hela Quintin{" "}
-                  <Feather name="check-circle" size={14} color="#1DA1F2" />
+                  {hostName}{" "}
+                  {hostVerified && (
+                    <Feather name="check-circle" size={14} color="#1DA1F2" />
+                  )}
                 </Text>
               </View>
             </View>
+
             <View style={styles.ownerActions}>
               <Pressable style={styles.ownerActionBtn}>
                 <Feather name="phone" size={18} color={COLORS.text} />
@@ -239,7 +325,7 @@ export default function CarDetailsScreen() {
             </View>
           </View>
 
-          {/* RESTORED: Features */}
+          {/* Features */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Car features</Text>
             <View style={styles.features}>
@@ -251,46 +337,24 @@ export default function CarDetailsScreen() {
               <FeatureCard
                 icon="zap"
                 label="Fuel Type"
-                value={car.fuelType || "Petrol"}
+                value={car.fuelType || "—"}
               />
               <FeatureCard
                 icon="settings"
                 label="Transmission"
-                value={car.transmission || "Auto"}
+                value={car.transmission || "—"}
               />
               <FeatureCard
                 icon="truck"
                 label="Vehicle Type"
-                value={car.vehicleType || "Sedan"}
-              />
-              <FeatureCard
-                icon="minimize-2"
-                label="Doors"
-                value={`${car.doors || 4} Doors`}
+                value={car.vehicleType || "—"}
               />
               <FeatureCard
                 icon="calendar"
                 label="Year"
-                value={car.year?.toString() || "2023"}
+                value={car.year?.toString() || "—"}
               />
             </View>
-          </View>
-
-          {/* RESTORED: Reviews Section */}
-          <View style={styles.section}>
-            <View style={styles.reviewHeader}>
-              <Text style={styles.sectionTitle}>
-                Review ({car.reviews || 0})
-              </Text>
-              <Pressable
-                onPress={() => router.push(`/car/reviews?carId=${car.id}`)}
-              >
-                <Text style={styles.seeAll}>See All</Text>
-              </Pressable>
-            </View>
-            {car.reviews === 0 && (
-              <Text style={styles.noReviews}>No reviews yet</Text>
-            )}
           </View>
 
           {/* Booking Details */}
@@ -318,7 +382,6 @@ export default function CarDetailsScreen() {
               <InputItem icon="phone" value={bookingForm.contact} />
             </View>
 
-            {/* Gender Selection */}
             <View style={styles.genderSection}>
               <Text style={styles.label}>Gender</Text>
               <View style={styles.genderRow}>
@@ -344,7 +407,6 @@ export default function CarDetailsScreen() {
               </View>
             </View>
 
-            {/* Dates */}
             <View style={styles.dateRow}>
               <DateBox
                 label="Pick up Date"
@@ -355,11 +417,12 @@ export default function CarDetailsScreen() {
                 label="Return Date"
                 value={formatDateDisplay(bookingForm.returnDate)}
                 onPress={() => {
-                  if (!bookingForm.pickupDate)
+                  if (!bookingForm.pickupDate) {
                     return Alert.alert(
                       "Wait",
                       "Please select a pickup date first."
                     );
+                  }
                   setShowDatePicker("return");
                 }}
               />
@@ -368,7 +431,6 @@ export default function CarDetailsScreen() {
         </View>
       </ScrollView>
 
-      {/* Footer Bar */}
       <View style={styles.bottomBar}>
         <Pressable style={styles.bookBtn} onPress={handlePayNow}>
           <Text style={styles.priceText}>${calculateTotalPrice()}</Text>
@@ -376,7 +438,6 @@ export default function CarDetailsScreen() {
         </Pressable>
       </View>
 
-      {/* Shared Calendar Component */}
       {showDatePicker && (
         <CustomCalendar
           visible={!!showDatePicker}
@@ -403,7 +464,6 @@ export default function CarDetailsScreen() {
   );
 }
 
-// Sub-components for cleaner structure
 const FeatureCard = ({
   icon,
   label,
@@ -449,6 +509,35 @@ const DateBox = ({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.white },
+
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.muted,
+  },
+  errorTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+  errorMsg: {
+    marginTop: 8,
+    fontSize: 13,
+    color: COLORS.muted,
+    textAlign: "center",
+  },
+  backBtn: {
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: COLORS.black,
+  },
+  backBtnText: { color: COLORS.white, fontWeight: "800" },
+
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -467,6 +556,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+
   imageContainer: { position: "relative" },
   image: { width, height: IMAGE_HEIGHT, backgroundColor: COLORS.border },
   favBtn: {
@@ -481,9 +571,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     elevation: 4,
   },
+
   content: { padding: 16 },
   title: { fontSize: 18, fontWeight: "800", color: COLORS.text },
   description: { marginTop: 8, fontSize: 13, color: COLORS.muted },
+
   ratingRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -493,6 +585,7 @@ const styles = StyleSheet.create({
   rating: { fontSize: 16, fontWeight: "700", color: COLORS.text },
   star: { fontSize: 14 },
   reviewCount: { fontSize: 13, color: COLORS.muted },
+
   ownerSection: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -516,6 +609,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+
   section: { marginTop: 24 },
   sectionTitle: {
     fontSize: 16,
@@ -523,6 +617,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     marginBottom: 16,
   },
+
   features: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   featureCard: {
     width: "30.5%",
@@ -547,14 +642,7 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     textAlign: "center",
   },
-  reviewHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  seeAll: { fontSize: 13, fontWeight: "600", color: "#007AFF" },
-  noReviews: { fontSize: 13, color: COLORS.muted, fontStyle: "italic" },
+
   driverToggle: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -566,6 +654,7 @@ const styles = StyleSheet.create({
   },
   driverTitle: { fontSize: 14, fontWeight: "700", color: COLORS.text },
   driverSubtitle: { fontSize: 12, color: COLORS.muted, marginTop: 2 },
+
   inputGroup: { gap: 12, marginBottom: 20 },
   inputWrapper: {
     flexDirection: "row",
@@ -577,6 +666,7 @@ const styles = StyleSheet.create({
   },
   inputDisabled: { opacity: 0.7 },
   input: { flex: 1, fontSize: 14, color: COLORS.text },
+
   genderSection: { marginBottom: 20 },
   label: {
     fontSize: 14,
@@ -595,6 +685,7 @@ const styles = StyleSheet.create({
   genderBtnActive: { backgroundColor: COLORS.black },
   genderText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
   genderTextActive: { color: COLORS.white },
+
   dateRow: { flexDirection: "row", gap: 12, marginBottom: 20 },
   dateBox: {
     flex: 1,
@@ -610,6 +701,7 @@ const styles = StyleSheet.create({
   },
   dateValue: { flexDirection: "row", alignItems: "center", gap: 8 },
   dateText: { fontSize: 11, color: COLORS.text, fontWeight: "700" },
+
   bottomBar: {
     padding: 16,
     borderTopWidth: 1,

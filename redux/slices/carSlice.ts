@@ -1,31 +1,17 @@
 // src/redux/slices/carSlice.ts
-import {
-  createAsyncThunk,
-  createSlice,
-  type PayloadAction,
-} from "@reduxjs/toolkit";
+import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/redux/store";
 
 import type { Car } from "@/types/car";
-import type { CarApi } from "@/types/carApi";
-import { mapCarApiToCar } from "@/types/carMapper";
+import type { AsyncStatus, Page } from "@/redux/thunks/carThunk";
 
 import {
-  fetchCars as apiFetchCars,
-  fetchFeaturedCars as apiFetchFeaturedCars,
-  fetchPopularCars as apiFetchPopularCars,
-  fetchCarById as apiFetchCarById,
-  type CarsListParams,
-} from "@/services/carsApi";
-
-/** Generic async status */
-type AsyncStatus = "idle" | "loading" | "succeeded" | "failed";
-
-type Page = {
-  limit: number;
-  offset: number;
-  total: number;
-};
+  fetchCars,
+  fetchFeaturedCars,
+  fetchPopularCars,
+  fetchCarById,
+  fetchCarByIdIfNeeded,
+} from "@/redux/thunks/carThunk";
 
 type CarsState = {
   // Main browse list
@@ -72,112 +58,11 @@ const initialState: CarsState = {
   errorById: {},
 };
 
-// -------------------------------
-// Error helper
-// -------------------------------
-function getErrorMessage(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === "string") return e;
-  try {
-    return JSON.stringify(e);
-  } catch {
-    return "Unknown error";
-  }
-}
-
-// -------------------------------
-// Thunks
-// -------------------------------
-
-/**
- * Fetch cars list (supports pagination + filters)
- * Stores UI-safe Car[] only.
- */
-export const fetchCars = createAsyncThunk<
-  { items: Car[]; page: Page },
-  CarsListParams | undefined
->("cars/fetchCars", async (params, thunkApi) => {
-  try {
-    const res = await apiFetchCars(params);
-    const apiItems = (res.items ?? []) as CarApi[];
-    const items = apiItems.map(mapCarApiToCar);
-    const page: Page = res.page
-      ? {
-          limit: Number(res.page.limit ?? 20),
-          offset: Number(res.page.offset ?? 0),
-          total: Number(res.page.total ?? items.length),
-        }
-      : { limit: 20, offset: 0, total: items.length };
-
-    return { items, page };
-  } catch (e) {
-    return thunkApi.rejectWithValue(getErrorMessage(e));
-  }
-});
-
-/**
- * Featured cars (home sections)
- */
-export const fetchFeaturedCars = createAsyncThunk<Car[], number | undefined>(
-  "cars/fetchFeaturedCars",
-  async (limit, thunkApi) => {
-    try {
-      const res = await apiFetchFeaturedCars(limit ?? 10);
-      const apiItems = (res.items ?? []) as CarApi[];
-      return apiItems.map(mapCarApiToCar);
-    } catch (e) {
-      return thunkApi.rejectWithValue(getErrorMessage(e));
-    }
-  }
-);
-
-/**
- * Popular cars (home sections)
- */
-export const fetchPopularCars = createAsyncThunk<Car[], number | undefined>(
-  "cars/fetchPopularCars",
-  async (limit, thunkApi) => {
-    try {
-      const res = await apiFetchPopularCars(limit ?? 10);
-      const apiItems = (res.items ?? []) as CarApi[];
-      return apiItems.map(mapCarApiToCar);
-    } catch (e) {
-      return thunkApi.rejectWithValue(getErrorMessage(e));
-    }
-  }
-);
-
-/**
- * Fetch a single car by id
- * Saves into byId cache.
- */
-export const fetchCarById = createAsyncThunk<Car | null, string>(
-  "cars/fetchCarById",
-  async (id, thunkApi) => {
-    try {
-      const apiItem = await apiFetchCarById(id); // returns CarApi | null
-      if (!apiItem) return null;
-
-      const car = mapCarApiToCar(apiItem as CarApi);
-      return car;
-    } catch (e) {
-      return thunkApi.rejectWithValue(getErrorMessage(e));
-    }
-  }
-);
-
-// -------------------------------
-// Slice
-// -------------------------------
-
 const carsSlice = createSlice({
   name: "cars",
   initialState,
   reducers: {
-    // Useful for logout or switching country
     resetCarsState: () => initialState,
-
-    // Optional: update pagination locally (rarely needed if server driven)
     setCarsPage(state, action: PayloadAction<Partial<Page>>) {
       state.page = { ...state.page, ...action.payload };
     },
@@ -243,7 +128,7 @@ const carsSlice = createSlice({
           "Failed to load popular cars";
       });
 
-    // ---- BY ID ----
+    // ---- BY ID (always fetch) ----
     builder
       .addCase(fetchCarById.pending, (state, action) => {
         const id = action.meta.arg;
@@ -253,13 +138,31 @@ const carsSlice = createSlice({
       .addCase(fetchCarById.fulfilled, (state, action) => {
         const id = action.meta.arg;
         state.statusById[id] = "succeeded";
-
-        if (action.payload) {
-          state.byId[action.payload.id] = action.payload;
-        }
+        if (action.payload) state.byId[action.payload.id] = action.payload;
       })
       .addCase(fetchCarById.rejected, (state, action) => {
         const id = action.meta.arg;
+        state.statusById[id] = "failed";
+        state.errorById[id] =
+          (action.payload as string) ||
+          action.error.message ||
+          "Failed to load car";
+      });
+
+    // ---- BY ID (cache-aware) ✅ ----
+    builder
+      .addCase(fetchCarByIdIfNeeded.pending, (state, action) => {
+        const id = action.meta.arg.id;
+        state.statusById[id] = "loading";
+        state.errorById[id] = null;
+      })
+      .addCase(fetchCarByIdIfNeeded.fulfilled, (state, action) => {
+        const id = action.meta.arg.id;
+        state.statusById[id] = "succeeded";
+        if (action.payload) state.byId[action.payload.id] = action.payload;
+      })
+      .addCase(fetchCarByIdIfNeeded.rejected, (state, action) => {
+        const id = action.meta.arg.id;
         state.statusById[id] = "failed";
         state.errorById[id] =
           (action.payload as string) ||

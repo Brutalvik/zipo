@@ -17,10 +17,6 @@ const HOST_CARS_API_BASE = `${API_BASE}/api/host/cars`;
 /**
  * Convert ANY backend car shape (snake_case, camelCase, mixed)
  * into the single UI-facing CarApi shape your app expects.
- *
- * IMPORTANT:
- * - Hero photo should follow your host finalize/reorder behavior:
- *   prefer first gallery item's url, else fallback to imageUrl/image_path.
  */
 function toCarApi(raw: any): CarApi {
   const rawGallery = raw?.gallery ?? raw?.image_gallery ?? null;
@@ -81,17 +77,36 @@ function toCarApi(raw: any): CarApi {
       lng: raw?.pickup?.lng ?? raw?.pickup_lng ?? null,
     },
 
-    hasImage: !!(raw?.hasImage ?? raw?.has_image),
-    imagePublic: !!(raw?.imagePublic ?? raw?.image_public),
+    hasImage: raw?.hasImage === true || raw?.has_image === true,
+    imagePublic: raw?.imagePublic !== false && raw?.image_public !== false,
     imagePath: raw?.imagePath ?? raw?.image_path ?? null,
 
-    // ✅ hero image preference: gallery[0].url > imageUrl > image_path
+    // hero image preference: gallery[0].url > imageUrl > image_path
     imageUrl: firstGalleryUrl || imageUrlCandidate || null,
 
     gallery: rawGallery,
 
     isPopular: !!(raw?.isPopular ?? raw?.is_popular),
     isFeatured: !!(raw?.isFeatured ?? raw?.is_featured),
+
+    host:
+      raw.host && typeof raw.host === "object"
+        ? {
+            id: String(raw.host.id ?? raw.host_id ?? ""),
+            name: raw.host.name ?? null,
+            avatarUrl: raw.host.avatarUrl ?? raw.host.avatar_url ?? null,
+            phone: raw.host.phone ?? null,
+            isVerified: !!raw.host.isVerified,
+          }
+        : raw.host_id
+          ? {
+              id: String(raw.host_id),
+              name: raw.host_name ?? null,
+              avatarUrl: raw.host_avatar_url ?? null,
+              phone: raw.host_phone ?? null,
+              isVerified: !!raw.host_is_verified,
+            }
+          : null,
 
     createdAt: raw?.createdAt ?? raw?.created_at ?? null,
     updatedAt: raw?.updatedAt ?? raw?.updated_at ?? null,
@@ -297,10 +312,25 @@ export async function fetchPopularCars(limit = 10) {
 }
 
 // ✅ FIXED: normalize to CarApi so mapCarApiToCar always gets the right shape
+// ✅ Always fresh + never breaks UUID
 export async function fetchCarById(id: string): Promise<CarApi | null> {
-  const payload = await apiGet<any>(`/api/cars/${encodeURIComponent(id)}`);
+  const cleanId = String(id ?? "")
+    .trim()
+    .split("?")[0]
+    .split("#")[0];
+
+  if (!cleanId) return null;
+
+  // cache-buster as a REAL query param (not inside the id)
+  const t = Date.now();
+
+  const payload = await apiGet<any>(
+    `/api/cars/${encodeURIComponent(cleanId)}?t=${t}`
+  );
+
   const raw = payload?.item ?? payload?.car ?? payload ?? null;
   if (!raw) return null;
+
   return toCarApi(raw);
 }
 

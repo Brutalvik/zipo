@@ -2,7 +2,7 @@ PROPRIETARY AND CONFIDENTIAL LICENSE
 
 SOFTWARE: Zipo: Peer-to-Peer Car Rental & Management App
 
-Copyright (c) [YEAR] [FULL NAME or COMPANY NAME]. All rights reserved.
+Copyright (c) [YEAR] [VIKRAM KUMAR - ZIPO CAR RENTALS]. All rights reserved.
 
 This software, including all source code, documentation, and related materials, is the sole and exclusive property of [FULL NAME or COMPANY NAME] (the "Owner").
 
@@ -11,4 +11,4 @@ This software, including all source code, documentation, and related materials, 
 3.  **Unauthorized Use Prohibited:** Any unauthorized use, reproduction, distribution, or disclosure of this software is strictly prohibited and may result in civil and criminal penalties.
 4.  **License Required:** The software may only be used pursuant to a valid, written license agreement executed by the Owner.
 
-For licensing inquiries, please contact: [YOUR CONTACT EMAIL OR ADDRESS]
+For licensing inquiries, please contact: [ziporental@gmail.com]

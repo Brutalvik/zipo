@@ -16,9 +16,6 @@ import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { useRouter } from "expo-router";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
 import {
-  fetchCars,
-  fetchFeaturedCars,
-  fetchPopularCars,
   selectCars,
   selectFeaturedCars,
   selectPopularCars,
@@ -44,6 +41,11 @@ import vehicleTypesRaw from "@/data/vehicleTypes.json";
 import { COLORS } from "@/theme/ui";
 import type { Car } from "@/types/car";
 import { geocodeCity } from "@/lib/locationHelpers";
+import {
+  fetchCars,
+  fetchFeaturedCars,
+  fetchPopularCars,
+} from "@/redux/thunks/carThunk";
 
 function titleCaseCity(input: string) {
   const s = (input || "").trim();

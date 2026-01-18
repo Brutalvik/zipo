@@ -79,6 +79,17 @@ export type Car = {
   features?: unknown[];
   requirements?: unknown[];
   pricingRules?: Record<string, unknown>;
+
+  /* =========================
+   * Host (owner of the car)
+   * ========================= */
+  host?: {
+    id: string;
+    name?: string | null;
+    avatarUrl?: string | null;
+    phone?: string | null;
+    isVerified?: boolean;
+  } | null;
 };
 
 export type HostCar = {
