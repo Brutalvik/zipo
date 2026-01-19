@@ -83,6 +83,11 @@ export default function CarDetailsScreen() {
 
   const flatListRef = useRef<FlatList>(null);
 
+  const activeIndexRef = useRef(0);
+  useEffect(() => {
+    activeIndexRef.current = activeIndex;
+  }, [activeIndex]);
+
   const needsKyc = useMemo(
     () => user?.kycStatus !== "verified",
     [user?.kycStatus]
@@ -158,6 +163,21 @@ export default function CarDetailsScreen() {
     },
     [images.length]
   );
+
+  const onMomentumEnd = useCallback(() => {
+    if (images.length < 2) return;
+
+    const i = activeIndexRef.current; // 0..images.length-1
+    const midBase = images.length; // start of middle copy
+    const midIndex = midBase + i;
+
+    // Find which copy we are currently in (approx)
+    // If we’re too close to the ends, jump back to the middle copy.
+    flatListRef.current?.scrollToIndex({
+      index: midIndex,
+      animated: false,
+    });
+  }, [images.length]);
 
   const formatDateDisplay = (date: Date | null) => {
     if (!date) return "Select date";
@@ -331,6 +351,7 @@ export default function CarDetailsScreen() {
               index,
             })}
             initialScrollIndex={images.length > 1 ? images.length : 0}
+            onMomentumScrollEnd={onMomentumEnd}
           />
 
           <Pressable
@@ -345,6 +366,17 @@ export default function CarDetailsScreen() {
             />
           </Pressable>
         </View>
+
+        {images.length > 1 ? (
+          <View style={styles.dotsRow}>
+            {images.map((_, i) => (
+              <View
+                key={String(i)}
+                style={[styles.dot, i === activeIndex ? styles.dotOn : null]}
+              />
+            ))}
+          </View>
+        ) : null}
 
         <View style={styles.content}>
           <Text style={styles.title}>{car.title}</Text>
@@ -936,5 +968,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: COLORS.muted,
+  },
+  dotsRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.18)",
+  },
+
+  dotOn: {
+    width: 16,
+    backgroundColor: "rgba(17,24,39,0.45)",
   },
 });
