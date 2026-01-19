@@ -26,6 +26,7 @@ import Button from "@/components/Button/Button";
 import { fetchHostMe } from "@/redux/thunks/hostThunk";
 import { selectHost } from "@/redux/slices/hostSlice";
 import { useFreshAvatarUrl } from "@/hooks/useFreshAvatarUrl";
+import ZipoLaunchSplash from "@/components/common/ZipoLaunchSplash";
 
 type MenuItem = {
   id: string;
@@ -71,10 +72,14 @@ export default function ProfileScreen() {
   const router = useRouter();
   const dispatch = useAppDispatch();
   const { user, logout } = useAuth();
-
+  const [isSwitching, setIsSwitching] = React.useState(false);
+  const [switchingTo, setSwitchingTo] = React.useState<AppMode | null>(null);
+  const didNavigateRef = React.useRef(false);
   useFreshAvatarUrl({ refreshMeOnFocus: false, forceSignedUrlOnFocus: true });
   const host = useAppSelector(selectHost);
   const hostExists = !!host;
+
+  const waitMin = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   const handleBecomePartner = async () => {
     try {
@@ -225,18 +230,42 @@ export default function ProfileScreen() {
     return json.user;
   };
 
-  const handleToggleMode = async () => {
-    const nextMode: AppMode = isHost ? "guest" : "host";
-    try {
-      track("app_mode_switch_tap", { from: mode, to: nextMode });
+  const nextFrame = () =>
+    new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
+  const handleToggleMode = async () => {
+    if (isSwitching) return;
+    didNavigateRef.current = false;
+
+    const nextMode: AppMode = isHost ? "guest" : "host";
+
+    setSwitchingTo(nextMode);
+    setIsSwitching(true);
+
+    await nextFrame();
+    await nextFrame();
+
+    const minSplash = waitMin(900);
+
+    try {
       await updateModeOnBackend(nextMode);
       dispatch(updateUser({ mode: nextMode }));
 
-      router.replace("/(app)");
+      await Promise.allSettled([
+        refreshUserFromBackend(),
+        dispatch(fetchHostMe() as any),
+      ]);
+
+      await minSplash;
+
+      if (!didNavigateRef.current) {
+        didNavigateRef.current = true;
+        router.replace(nextMode === "host" ? "/(app)" : "/(tabs)");
+      }
     } catch (e: any) {
-      console.warn("Mode switch failed:", e?.message || e);
       Alert.alert("Error", e?.message || "Could not switch mode.");
+      setIsSwitching(false);
+      setSwitchingTo(null);
     }
   };
 
@@ -350,7 +379,7 @@ export default function ProfileScreen() {
             <Text style={styles.brand}>Zipo</Text>
 
             {/* Glass button using your custom component */}
-            {/* {hostExists ? (
+            {hostExists ? (
               <View style={{ width: 168 }}>
                 <Button
                   title={`Switch to ${isHost ? "guest" : "host"}`}
@@ -360,8 +389,8 @@ export default function ProfileScreen() {
                   iconName="exchange"
                 />
               </View>
-            ) : null} */}
-            <View style={{ width: 168 }}>
+            ) : null}
+            {/* <View style={{ width: 168 }}>
               <Button
                 title={`Switch to ${isHost ? "guest" : "host"}`}
                 variant="primary"
@@ -369,7 +398,7 @@ export default function ProfileScreen() {
                 onPress={handleToggleMode}
                 iconName="exchange"
               />
-            </View>
+            </View> */}
           </View>
 
           {/* User card */}
@@ -555,6 +584,11 @@ export default function ProfileScreen() {
 
           <View style={{ height: 120 }} />
         </ScrollView>
+        {isSwitching ? (
+          <View style={styles.switchOverlay} pointerEvents="auto">
+            <ZipoLaunchSplash modeLabel={switchingTo ?? undefined} />
+          </View>
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -634,6 +668,11 @@ const renderIcon = (type: MenuItem["iconType"], danger?: boolean) => {
 };
 
 const styles = StyleSheet.create({
+  switchOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 999,
+    elevation: 999,
+  },
   safeArea: { flex: 1, backgroundColor: "#F6F7FB" },
   container: { flex: 1, backgroundColor: "#F6F7FB" },
   scrollContent: { paddingHorizontal: 18, paddingTop: 10 },
