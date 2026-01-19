@@ -1,5 +1,35 @@
 // types/car.ts
 
+import { Feather } from "@expo/vector-icons";
+
+export type CarAmenity =
+  | "adaptive_cruise"
+  | "air_conditioning"
+  | "all_wheel_drive"
+  | "android_auto"
+  | "apple_carplay"
+  | "backup_camera"
+  | "blind_spot_monitor"
+  | "bluetooth"
+  | "child_seat"
+  | "heated_seats"
+  | "heated_steering_wheel"
+  | "keyless_entry"
+  | "lane_keep_assist"
+  | "navigation"
+  | "parking_sensors"
+  | "remote_start"
+  | "roof_rack"
+  | "smoke_free"
+  | "sunroof"
+  | "usb"
+  | "ventilated_seats"
+  | "wireless_charging";
+
+export type CarFeatures = {
+  amenities: CarAmenity[];
+};
+
 export type Car = {
   /* =========================
    * Identity
@@ -76,7 +106,7 @@ export type Car = {
   /* =========================
    * Flexible / future
    * ========================= */
-  features?: unknown[];
+  features?: CarFeatures;
   requirements?: unknown[];
   pricingRules?: Record<string, unknown>;
 
@@ -89,6 +119,7 @@ export type Car = {
     avatarUrl?: string | null;
     phone?: string | null;
     isVerified?: boolean;
+    isAllStar?: boolean;
   } | null;
 };
 
@@ -120,4 +151,10 @@ export type HostCar = {
   requirements?: any; // jsonb
 
   updated_at?: string | null;
+};
+
+export type FeatureItem = {
+  id: string;
+  label: string;
+  icon: keyof typeof Feather.glyphMap;
 };

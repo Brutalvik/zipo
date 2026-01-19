@@ -37,12 +37,7 @@ import {
   publishHostCar,
   relistHostCar,
 } from "@/services/carsApi";
-
-type FeatureItem = {
-  id: string;
-  label: string;
-  icon: keyof typeof Feather.glyphMap;
-};
+import { ALL_FEATURE_ITEMS } from "@/types/carMapper";
 
 const ACTIVE = "active";
 
@@ -228,46 +223,6 @@ function KeyValueRow({
   );
 }
 
-// ✅ Expanded “possible features” catalog
-const ALL_FEATURE_ITEMS: FeatureItem[] = [
-  // Comfort
-  { id: "air_conditioning", label: "Air conditioning", icon: "wind" },
-  { id: "heated_seats", label: "Heated seats", icon: "wind" },
-  { id: "ventilated_seats", label: "Ventilated seats", icon: "wind" },
-  { id: "heated_steering_wheel", label: "Heated steering wheel", icon: "wind" },
-  { id: "sunroof", label: "Sunroof", icon: "sun" },
-  { id: "panoramic_roof", label: "Panoramic roof", icon: "sun" },
-
-  // Tech
-  { id: "bluetooth", label: "Bluetooth", icon: "bluetooth" },
-  { id: "apple_carplay", label: "Apple CarPlay", icon: "smartphone" },
-  { id: "android_auto", label: "Android Auto", icon: "smartphone" },
-  { id: "navigation", label: "Navigation", icon: "map" },
-  { id: "usb", label: "USB", icon: "cpu" },
-  { id: "wireless_charging", label: "Wireless charging", icon: "zap" },
-  { id: "keyless_entry", label: "Keyless entry", icon: "key" },
-  { id: "remote_start", label: "Remote start", icon: "power" },
-
-  // Safety
-  { id: "backup_camera", label: "Backup camera", icon: "camera" },
-  { id: "parking_sensors", label: "Parking sensors", icon: "crosshair" },
-  { id: "blind_spot_monitor", label: "Blind spot monitor", icon: "eye" },
-  { id: "lane_keep_assist", label: "Lane keep assist", icon: "navigation" },
-  { id: "adaptive_cruise", label: "Adaptive cruise", icon: "target" },
-
-  // Utility
-  { id: "all_wheel_drive", label: "AWD", icon: "compass" },
-  { id: "roof_rack", label: "Roof rack", icon: "package" },
-  { id: "tow_hitch", label: "Tow hitch", icon: "link" },
-  { id: "third_row", label: "3rd row seating", icon: "users" },
-  { id: "ski_rack", label: "Ski rack", icon: "archive" },
-
-  // Policies / convenience
-  { id: "pet_friendly", label: "Pet friendly", icon: "heart" },
-  { id: "smoke_free", label: "Smoke-free", icon: "slash" },
-  { id: "child_seat", label: "Child seat", icon: "user" },
-];
-
 // -------------------------
 // Top carousel (photo-first)
 // -------------------------
@@ -352,8 +307,7 @@ export default function HostCarDetails() {
   // Local editable state (NOT auto-saving)
   const [odoText, setOdoText] = useState("");
   const [amenitiesLocal, setAmenitiesLocal] = useState<string[]>([]);
-  const [blockedLocal, setBlockedLocal] = useState<string[]>([]); // keep sorted
-
+  const [blockedLocal, setBlockedLocal] = useState<string[]>([]);
   // Range selection UI
   const todayKey = useMemo(() => toDateKey(new Date()), []);
   const [rangeStart, setRangeStart] = useState<string | null>(null);

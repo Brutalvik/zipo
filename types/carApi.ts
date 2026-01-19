@@ -1,5 +1,7 @@
 // src/types/carApi.ts
 
+import { CarFeatures } from "./car";
+
 export type CarApi = {
   id: string;
   title: string | null;
@@ -18,6 +20,8 @@ export type CarApi = {
   reviews: number | null;
 
   status: string | null;
+
+  features: CarFeatures;
 
   address: {
     countryCode: string | null;
@@ -49,6 +53,7 @@ export type CarApi = {
     avatarUrl: string | null;
     phone: string | null;
     isVerified: boolean;
+    isAllStar: boolean;
   } | null;
 };
 

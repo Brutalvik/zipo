@@ -94,7 +94,7 @@ function toCarApi(raw: any): CarApi {
     imageUrl: firstGalleryUrl || imageUrlCandidate || null,
 
     gallery: rawGallery,
-
+    features: raw?.features,
     isPopular: !!(raw?.isPopular ?? raw?.is_popular),
     isFeatured: !!(raw?.isFeatured ?? raw?.is_featured),
 
@@ -106,6 +106,7 @@ function toCarApi(raw: any): CarApi {
             avatarUrl: raw.host.avatarUrl ?? raw.host.avatar_url ?? null,
             phone: raw.host.phone ?? null,
             isVerified: !!raw.host.isVerified,
+            isAllStar: !!raw.host.isAllStar,
           }
         : raw.host_id
           ? {
@@ -114,6 +115,7 @@ function toCarApi(raw: any): CarApi {
               avatarUrl: raw.host_avatar_url ?? null,
               phone: raw.host_phone ?? null,
               isVerified: !!raw.host_is_verified,
+              isAllStar: !!raw.host_is_all_star,
             }
           : null,
 
@@ -374,6 +376,8 @@ export async function fetchCarById(id: string): Promise<CarApi | null> {
 
   const raw = payload?.item ?? payload?.car ?? payload ?? null;
   if (!raw) return null;
+
+  console.log("RAW CAR --> ", raw);
 
   return toCarApi(raw);
 }

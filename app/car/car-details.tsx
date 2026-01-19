@@ -1,3 +1,4 @@
+// app/car/car-details.tsx
 import React, {
   useMemo,
   useState,
@@ -28,11 +29,12 @@ import { Feather } from "@expo/vector-icons";
 import CustomCalendar from "@/components/common/CustomCalendar";
 import type { Car } from "@/types/car";
 import type { CarApi } from "@/types/carApi";
-import { mapCarApiToCar } from "@/types/carMapper";
+import { mapCarApiToCar, resolveAmenities } from "@/types/carMapper";
 import { fetchCarById as apiFetchCarById } from "@/services/carsApi";
 import { useAppSelector } from "@/redux/hooks";
 import { COLORS, RADIUS } from "@/theme/ui";
 import { getAvatar } from "@/lib/avatar";
+import { prettyLabel, prettyValue } from "@/lib/helpers";
 
 const { width } = Dimensions.get("window");
 const IMAGE_HEIGHT = 280;
@@ -42,7 +44,6 @@ type BookingFormData = {
   fullName: string;
   email: string;
   contact: string;
-  gender: "Male" | "Female" | "Others";
   pickupDate: Date | null;
   returnDate: Date | null;
 };
@@ -65,12 +66,17 @@ export default function CarDetailsScreen() {
     "pickup" | "return" | null
   >(null);
 
+  // ✅ Features expand/collapse
+  const [showAllFeatures, setShowAllFeatures] = useState(false);
+
+  // ✅ Top-right menu
+  const [showMenu, setShowMenu] = useState(false);
+
   const [bookingForm, setBookingForm] = useState<BookingFormData>({
     bookWithDriver: false,
     fullName: user?.name || "",
     email: user?.email || "",
     contact: user?.phoneNumber || "",
-    gender: "Male",
     pickupDate: null,
     returnDate: null,
   });
@@ -191,6 +197,8 @@ export default function CarDetailsScreen() {
     [showDatePicker]
   );
 
+  console.log(car);
+
   const handlePayNow = () => {
     if (needsKyc) {
       Alert.alert("KYC Verification", "Please verify your profile to book.");
@@ -202,6 +210,60 @@ export default function CarDetailsScreen() {
     }
     console.log("Processing Booking...", bookingForm);
   };
+
+  // ✅ Full feature list for "More"
+  const featureList = useMemo(() => {
+    if (!car) return [];
+
+    const items: { label: string; value: string }[] = [];
+
+    // ✅ Always include these (so "More" makes sense)
+    items.push({ label: "Vehicle Type", value: prettyValue(car.vehicleType) });
+    items.push({ label: "Transmission", value: prettyValue(car.transmission) });
+    items.push({ label: "Fuel Type", value: prettyValue(car.fuelType) });
+    items.push({
+      label: "Seats",
+      value: car.seats != null ? String(car.seats) : "—",
+    });
+    items.push({
+      label: "Year",
+      value: car.year != null ? String(car.year) : "—",
+    });
+
+    // Optional extras if present
+    if (car.make) items.push({ label: "Make", value: prettyValue(car.make) });
+    if (car.model)
+      items.push({ label: "Model", value: prettyValue(car.model) });
+    if (car.trim) items.push({ label: "Trim", value: prettyValue(car.trim) });
+    if (car.bodyType)
+      items.push({ label: "Body Type", value: prettyValue(car.bodyType) });
+
+    if (car.doors != null)
+      items.push({ label: "Doors", value: String(car.doors) });
+    if (car.evRangeKm != null)
+      items.push({ label: "EV Range", value: `${car.evRangeKm} km` });
+    if (car.odometerKm != null)
+      items.push({ label: "Odometer", value: `${car.odometerKm} km` });
+
+    // Deduplicate by label (just in case)
+    const seen = new Set<string>();
+    return items.filter((x) => {
+      if (seen.has(x.label)) return false;
+      seen.add(x.label);
+      return true;
+    });
+  }, [car]);
+
+  const amenityItems = useMemo(() => {
+    return resolveAmenities(car?.features?.amenities ?? []);
+  }, [car]);
+
+  const canExpandAmenities = amenityItems.length > 6;
+
+  const visibleAmenities = useMemo(
+    () => (showAllFeatures ? amenityItems : amenityItems.slice(0, 6)),
+    [amenityItems, showAllFeatures]
+  );
 
   // ---- Loading / error states (prevents your "imageUrl of undefined" crash) ----
   if (loadState === "loading" || loadState === "idle") {
@@ -232,8 +294,8 @@ export default function CarDetailsScreen() {
 
   const hostName = car.host?.name?.trim() || "Host";
   const hostAvatar = getAvatar(car.host?.avatarUrl);
-
   const hostVerified = !!car.host?.isVerified;
+  const hostAllStar = !!car.host?.isAllStar;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -243,7 +305,7 @@ export default function CarDetailsScreen() {
           <Feather name="arrow-left" size={20} color={COLORS.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Car Details</Text>
-        <Pressable style={styles.iconBtn}>
+        <Pressable style={styles.iconBtn} onPress={() => setShowMenu(true)}>
           <Feather name="more-horizontal" size={20} color={COLORS.text} />
         </Pressable>
       </View>
@@ -313,15 +375,21 @@ export default function CarDetailsScreen() {
                   {hostVerified && (
                     <Feather name="check-circle" size={14} color="#1DA1F2" />
                   )}
+                  {hostAllStar && (
+                    <Text style={styles.allStarBadge}> ALL-STAR</Text>
+                  )}
                 </Text>
               </View>
             </View>
 
+            {/* ✅ removed phone action as requested */}
             <View style={styles.ownerActions}>
-              <Pressable style={styles.ownerActionBtn}>
-                <Feather name="phone" size={18} color={COLORS.text} />
-              </Pressable>
-              <Pressable style={styles.ownerActionBtn}>
+              <Pressable
+                style={styles.ownerActionBtn}
+                onPress={() =>
+                  Alert.alert("Messaging", "Messaging will be enabled soon.")
+                }
+              >
                 <Feather name="message-circle" size={18} color={COLORS.text} />
               </Pressable>
             </View>
@@ -329,7 +397,22 @@ export default function CarDetailsScreen() {
 
           {/* Features */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Car features</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Car features</Text>
+
+              {canExpandAmenities && (
+                <Pressable
+                  onPress={() => setShowAllFeatures((v) => !v)}
+                  hitSlop={10}
+                >
+                  <Text style={styles.moreText}>
+                    {showAllFeatures ? "Less" : "Show All"}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* quick spec cards (still useful) */}
             <View style={styles.features}>
               <FeatureCard
                 icon="users"
@@ -339,17 +422,17 @@ export default function CarDetailsScreen() {
               <FeatureCard
                 icon="zap"
                 label="Fuel Type"
-                value={car.fuelType || "—"}
+                value={prettyLabel(car.fuelType)}
               />
               <FeatureCard
                 icon="settings"
                 label="Transmission"
-                value={car.transmission || "—"}
+                value={prettyLabel(car.transmission)}
               />
               <FeatureCard
                 icon="truck"
                 label="Vehicle Type"
-                value={car.vehicleType || "—"}
+                value={prettyLabel(car.vehicleType)}
               />
               <FeatureCard
                 icon="calendar"
@@ -357,6 +440,35 @@ export default function CarDetailsScreen() {
                 value={car.year?.toString() || "—"}
               />
             </View>
+
+            {/* {showAllFeatures && featureList.length > 0 && (
+              <View style={styles.allFeaturesBox}>
+                {featureList.map((f) => (
+                  <View key={f.label} style={styles.featureRow}>
+                    <Text style={styles.featureRowLabel}>{f.label}</Text>
+                    <Text style={styles.featureRowValue}>{f.value}</Text>
+                  </View>
+                ))}
+              </View>
+            )} */}
+
+            {/* amenities list */}
+            {!!amenityItems.length && (
+              <View style={styles.amenitiesWrap}>
+                {visibleAmenities.map((a) => (
+                  <View key={a.id} style={styles.amenityPill}>
+                    <Feather name={a.icon} size={14} color={COLORS.text} />
+                    <Text style={styles.amenityText}>{a.label}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {!amenityItems.length && (
+              <Text style={styles.noAmenitiesText}>
+                No extra features listed.
+              </Text>
+            )}
           </View>
 
           {/* Booking Details */}
@@ -384,30 +496,7 @@ export default function CarDetailsScreen() {
               <InputItem icon="phone" value={bookingForm.contact} />
             </View>
 
-            <View style={styles.genderSection}>
-              <Text style={styles.label}>Gender</Text>
-              <View style={styles.genderRow}>
-                {(["Male", "Female", "Others"] as const).map((g) => (
-                  <Pressable
-                    key={g}
-                    style={[
-                      styles.genderBtn,
-                      bookingForm.gender === g && styles.genderBtnActive,
-                    ]}
-                    onPress={() => setBookingForm((p) => ({ ...p, gender: g }))}
-                  >
-                    <Text
-                      style={[
-                        styles.genderText,
-                        bookingForm.gender === g && styles.genderTextActive,
-                      ]}
-                    >
-                      {g}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
+            {/* ✅ Gender removed as requested */}
 
             <View style={styles.dateRow}>
               <DateBox
@@ -461,6 +550,44 @@ export default function CarDetailsScreen() {
               : new Date()
           }
         />
+      )}
+
+      {/* ✅ 3-dots menu */}
+      {showMenu && (
+        <View style={styles.menuOverlay}>
+          <Pressable
+            style={styles.menuBackdrop}
+            onPress={() => setShowMenu(false)}
+          />
+          <View style={styles.menuCard}>
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                setShowMenu(false);
+                Alert.alert("Share", "Share will be enabled soon.");
+              }}
+            >
+              <Text style={styles.menuItemText}>Share</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                setShowMenu(false);
+                Alert.alert("Report", "Report listing will be enabled soon.");
+              }}
+            >
+              <Text style={styles.menuItemText}>Report listing</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => setShowMenu(false)}
+            >
+              <Text style={styles.menuItemText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
       )}
     </SafeAreaView>
   );
@@ -669,24 +796,12 @@ const styles = StyleSheet.create({
   inputDisabled: { opacity: 0.7 },
   input: { flex: 1, fontSize: 14, color: COLORS.text },
 
-  genderSection: { marginBottom: 20 },
   label: {
     fontSize: 14,
     fontWeight: "700",
     color: COLORS.text,
     marginBottom: 12,
   },
-  genderRow: { flexDirection: "row", gap: 12 },
-  genderBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: RADIUS.lg,
-    backgroundColor: COLORS.bg,
-    alignItems: "center",
-  },
-  genderBtnActive: { backgroundColor: COLORS.black },
-  genderText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-  genderTextActive: { color: COLORS.white },
 
   dateRow: { flexDirection: "row", gap: 12, marginBottom: 20 },
   dateBox: {
@@ -721,4 +836,105 @@ const styles = StyleSheet.create({
   },
   priceText: { color: COLORS.white, fontSize: 16, fontWeight: "800" },
   bookText: { color: COLORS.white, fontSize: 15, fontWeight: "700" },
+
+  // new: all-star + features more + menu
+  allStarBadge: {
+    color: "#111827",
+    fontWeight: "900",
+    fontSize: 11,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  moreText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: COLORS.black,
+  },
+  allFeaturesBox: {
+    marginTop: 12,
+    padding: 14,
+    borderRadius: RADIUS.lg,
+    backgroundColor: COLORS.bg,
+    gap: 10,
+  },
+  featureRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  featureRowLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+  },
+  featureRowValue: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.text,
+    maxWidth: "60%",
+    textAlign: "right",
+  },
+  menuOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: "flex-end",
+  },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  menuCard: {
+    backgroundColor: COLORS.white,
+    padding: 16,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderTopWidth: 1,
+    borderColor: COLORS.border,
+    gap: 10,
+  },
+  menuItem: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: COLORS.bg,
+    alignItems: "center",
+  },
+  menuItemText: {
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  amenitiesWrap: {
+    marginTop: 12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  amenityPill: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  amenityText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  noAmenitiesText: {
+    marginTop: 10,
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.muted,
+  },
 });
