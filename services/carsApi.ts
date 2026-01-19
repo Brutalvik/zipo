@@ -377,8 +377,6 @@ export async function fetchCarById(id: string): Promise<CarApi | null> {
   const raw = payload?.item ?? payload?.car ?? payload ?? null;
   if (!raw) return null;
 
-  console.log("RAW CAR --> ", raw);
-
   return toCarApi(raw);
 }
 

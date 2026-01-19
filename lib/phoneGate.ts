@@ -37,7 +37,7 @@ async function logEvent(
     await mod.logEvent(name, params ?? {});
   } catch {
     // fallback no-op
-    // console.log(`[analytics] ${name}`, params ?? {});
+    console.log(`[analytics] ${name}`, params ?? {});
   }
 }
 

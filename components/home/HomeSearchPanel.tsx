@@ -132,8 +132,6 @@ export default function HomeSearchPanel({
         15
       );
 
-      console.log("Cars found:", cars.length);
-
       // Callback with cars
       onPressSearch?.(cars);
     } finally {

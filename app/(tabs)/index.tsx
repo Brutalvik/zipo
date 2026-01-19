@@ -223,9 +223,6 @@ export default function HomeScreen() {
       const payload = result.payload as { items: Car[]; page: any } | undefined;
       const foundCars = payload?.items || [];
 
-      console.log("Search found cars:", foundCars.length);
-      console.log("Actual cars:", foundCars);
-
       setSearchResultsLocal(foundCars);
 
       setIsSearchMode(true);

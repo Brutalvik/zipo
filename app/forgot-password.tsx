@@ -49,8 +49,6 @@ export default function ForgotPasswordScreen() {
         "Check your email",
         "If an account exists for this email, you’ll receive a password reset link shortly."
       );
-      console.log("SUCCESS Firebase project:", auth.app.options.projectId);
-      console.log("SUCCESS Auth domain:", auth.app.options.authDomain);
       router.back();
     } catch (err: any) {
       // Keep messaging safe (don’t reveal whether the account exists)
@@ -59,8 +57,6 @@ export default function ForgotPasswordScreen() {
         "Check your email",
         "If an account exists for this email, you’ll receive a password reset link shortly."
       );
-      console.log("Firebase project:", auth.app.options.projectId);
-      console.log("Auth domain:", auth.app.options.authDomain);
     } finally {
       setIsLoading(false);
     }

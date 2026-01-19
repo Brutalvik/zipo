@@ -217,8 +217,6 @@ export default function CarDetailsScreen() {
     [showDatePicker]
   );
 
-  console.log(car);
-
   const handlePayNow = () => {
     if (needsKyc) {
       Alert.alert("KYC Verification", "Please verify your profile to book.");
@@ -315,6 +313,7 @@ export default function CarDetailsScreen() {
   const hostName = car.host?.name?.trim() || "Host";
   const hostAvatar = getAvatar(car.host?.avatarUrl);
   const hostVerified = !!car.host?.isVerified;
+  console.log("IS HOST VERIFIED : ", hostVerified);
   const hostAllStar = !!car.host?.isAllStar;
 
   return (
