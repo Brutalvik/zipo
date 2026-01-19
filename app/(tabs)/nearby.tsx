@@ -41,6 +41,7 @@ import {
 import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import { CarToolTip } from "@/components/cars/CarToolTip";
 import { useRouter } from "expo-router";
+import { Keyboard } from "react-native";
 
 type ApiCar = {
   id: string;
@@ -143,7 +144,6 @@ export default function NearbyScreen() {
   const [accuracyMeters, setAccuracyMeters] = useState<number | null>(null);
 
   const [cityInput, setCityInput] = useState<string>("");
-  const [cityLabel, setCityLabel] = useState<string>("");
   const [isUsingUserLocation, setIsUsingUserLocation] = useState(true);
 
   const [radiusUiKm, setRadiusUiKm] = useState<number>(10);
@@ -167,8 +167,8 @@ export default function NearbyScreen() {
 
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
 
-  const effectiveLat = isUsingUserLocation ? userLat : searchLat ?? userLat;
-  const effectiveLng = isUsingUserLocation ? userLng : searchLng ?? userLng;
+  const effectiveLat = isUsingUserLocation ? userLat : (searchLat ?? userLat);
+  const effectiveLng = isUsingUserLocation ? userLng : (searchLng ?? userLng);
 
   const filteredCars = useMemo(() => {
     let list = cars;
@@ -277,7 +277,6 @@ export default function NearbyScreen() {
           "";
 
         const label = titleCaseCity(cityGuess) || "Your area";
-        setCityLabel(label);
         setCityInput(label);
       } catch {
         setLocAllowed(false);
@@ -314,8 +313,8 @@ export default function NearbyScreen() {
         const listRaw = Array.isArray((json as any)?.items)
           ? (json as any).items
           : Array.isArray(json)
-          ? json
-          : [];
+            ? json
+            : [];
 
         const list: any[] = Array.isArray(listRaw)
           ? listRaw.filter(Boolean)
@@ -326,19 +325,19 @@ export default function NearbyScreen() {
             typeof c?.pickup?.lat === "number"
               ? c.pickup.lat
               : typeof c?.pickup_lat === "number"
-              ? c.pickup_lat
-              : typeof c?.pickupLat === "number"
-              ? c.pickupLat
-              : null;
+                ? c.pickup_lat
+                : typeof c?.pickupLat === "number"
+                  ? c.pickupLat
+                  : null;
 
           const pickupLng =
             typeof c?.pickup?.lng === "number"
               ? c.pickup.lng
               : typeof c?.pickup_lng === "number"
-              ? c.pickup_lng
-              : typeof c?.pickupLng === "number"
-              ? c.pickupLng
-              : null;
+                ? c.pickup_lng
+                : typeof c?.pickupLng === "number"
+                  ? c.pickupLng
+                  : null;
 
           return {
             id: String(c.id),
@@ -666,7 +665,6 @@ export default function NearbyScreen() {
               if (lat && lng) {
                 shouldZoomRef.current = true;
                 setIsUsingUserLocation(false);
-                setCityLabel(data.description);
                 setCityInput(data.description);
                 setSearchLat(lat);
                 setSearchLng(lng);
@@ -681,9 +679,6 @@ export default function NearbyScreen() {
               value: cityInput,
               onChangeText: (text) => {
                 setCityInput(text);
-                if (text === "") {
-                  setCityLabel("");
-                }
               },
               placeholderTextColor: "#9CA3AF",
               clearButtonMode: "while-editing",
@@ -695,7 +690,10 @@ export default function NearbyScreen() {
             )}
             renderRightButton={() => (
               <Pressable
-                onPress={() => requestLocationPermissionAgain()}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  requestLocationPermissionAgain();
+                }}
                 style={styles.circleBtn}
                 accessibilityRole="button"
               >
