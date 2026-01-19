@@ -13,7 +13,7 @@ import AuthGuard from "@/app/AuthGuard";
 function RootLayoutNav() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
+      <StatusBar style="dark" backgroundColor="#FFFFFF" />
       <Stack
         screenOptions={{
           headerShown: false,
